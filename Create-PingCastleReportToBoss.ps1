@@ -1,91 +1,126 @@
-﻿[xml]$data = Get-Content .\ad_hc_int.vxops.se.xml
+﻿[CmdletBinding()]
+param(
+    [Parameter(Mandatory=$false)]
+    [string]$XmlPath = ".\ad_hc_int.vxops.se.xml",
+    
+    [Parameter(Mandatory=$false)]
+    [string]$OutputPath = "HealthcheckReport.html",
+    
+    [Parameter(Mandatory=$false)]
+    [string]$ThemeColor = "#990AE3"
+)
 
-$domain = $data.HealthcheckData.DomainFQDN
-$reportdate = $data.HealthcheckData.GenerationDate
+# Read the XML file
+if(!(Test-Path $XmlPath)) {
+    Write-Error "XML file not found: $XmlPath"
+    exit 1
+}
 
-$globalScore = $data.HealthcheckData.GlobalScore
-$StaleScore = $data.HealthcheckData.StaleObjectsScore
-$privilegedScore = $data.HealthcheckData.PrivilegiedGroupScore
-$trustscore = $data.HealthcheckData.TrustScore
-$AnomalyScore = $data.HealthcheckData.AnomalyScore
+[xml]$data = Get-Content $XmlPath
+
+# Ensure PSWriteHTML module is installed
+if (!(Get-Module -ListAvailable -Name PSWriteHTML)) {
+    Write-Error "PSWriteHTML module is required but not installed. Install it using: Install-Module -Name PSWriteHTML -Force"
+    exit 1
+}
 
 # Import PSWriteHTML module
-Import-Module PSWriteHTML
-
-# Create PSCustomObjects from XML data
-$healthcheckData = $data.SelectNodes("//HealthcheckRiskRule") | ForEach-Object {
-    # Create new PSCustomObject for each node
-    [PSCustomObject]@{
-        Points = $_.Points
-        Category = $_.Category
-        Model = $_.Model
-        Rationale = $_.Rationale
-    }
-} 
-
-# Calculate summary statistics
-$totalPoints = ($healthcheckData | Measure-Object -Property Points -Sum).Sum
-$averagePoints = ($healthcheckData | Measure-Object -Property Points -Average).Average
-$categoryCount = $healthcheckData | Group-Object Category | Select-Object Name, Count
-
-$currentDateTime = "2025-04-10 09:00:04"
-$currentUser = "DambergC"
-
-New-HTML -TitleText "Healthcheck Risk Rules Report" -Online -FilePath "HealthcheckReport.html" {
-   
+try {
+    Import-Module PSWriteHTML -ErrorAction Stop
+} catch {
+    Write-Error "Failed to import PSWriteHTML module: $_"
+    exit 1
+}
+# Helper function to determine score color
+function Get-ScoreColor {
+    param([int]$Score)
     
-    New-HTMLHeader {
-        New-HTMLText -Text "Healthcheck Risk Rules Analysis - $domain" -Color '#990AE3' -Alignment center -FontSize 40
-        
-    }
-    
-    New-HTMLSection -HeaderText 'GlobalScore' -HeaderBackGroundColor '#990AE3' -HeaderTextColor White -HeaderTextSize 40 -HeaderTextAlignment center {
- 
-            New-HTMLPanel {
-            New-HTMLText -Text "$globalScore" -Color '#990AE3' -Alignment center -FontSize 155 -FontWeight bold
-            New-HTMLText -Text "/100" -Color '#990AE3' -Alignment center -FontSize 36
-        }
-    
-    }
+    if ($Score -ge 80) { return "green" }
+    elseif ($Score -ge 50) { return "orange" }
+    else { return "red" }
+}
 
+# Then use it in your HTML sections:
+New-HTMLText -Text "$globalScore" -Color (Get-ScoreColor $globalScore) -Alignment center -FontSize 155 -FontWeight bold
 
-    New-HTMLSection -HeaderBackGroundColor '#990AE3' {
+# Replace hardcoded values with dynamic ones
+$currentDateTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+$currentUser = $env:USERNAME
 
-                New-HTMLPanel {
-                New-HTMLText -Text 'Stale' -Color '#990AE3' -Alignment center -FontSize 40
-            New-HTMLText -Text "$StaleScore" -Color '#990AE3' -Alignment center -FontSize 72 -FontWeight bold
-            New-HTMLText -Text "/100" -Color '#990AE3' -Alignment center -FontSize 36
-        }
-                        New-HTMLPanel {
-                        New-HTMLText -Text 'Privileged' -Color '#990AE3' -Alignment center -FontSize 40
-            New-HTMLText -Text "$privilegedScore" -Color '#990AE3' -Alignment center -FontSize 72 -FontWeight bold
-            New-HTMLText -Text "/100" -Color '#990AE3' -Alignment center -FontSize 36
-        }
-                        New-HTMLPanel {
-                        New-HTMLText -Text 'Trust' -Color '#990AE3' -Alignment center -FontSize 40
-            New-HTMLText -Text "$trustscore" -Color '#990AE3' -Alignment center -FontSize 72 -FontWeight bold
-            New-HTMLText -Text "/100" -Color '#990AE3' -Alignment center -FontSize 36
-        }
-                                New-HTMLPanel {
-                                New-HTMLText -Text 'Anomaly' -Color '#990AE3' -Alignment center -FontSize 40
-            New-HTMLText -Text "$AnomalyScore" -Color '#990AE3' -Alignment center -FontSize 72 -FontWeight bold
-            New-HTMLText -Text "/100" -Color '#990AE3' -Alignment center -FontSize 36
-        }
-    }
+# Make styling more flexible by parameterizing colors and styles
+New-HTML -TitleText "PingCastle Healthcheck Report - $domain" -Online -FilePath $OutputPath {
+    # Your existing code with $ThemeColor parameter instead of hardcoded '#990AE3'
 
-    New-HTMLSection -HeaderBackGroundColor '#990AE3' -HeaderText "Detailed Risk Rules" -HeaderTextSize 40 {
-        New-HTMLTable -DataTable $healthcheckData -HideFooter -HideButtons -DisableSearch -PagingStyle full{
-            New-TableHeader -Color White -BackgroundColor '#0066cc'
-        } -SearchBuilder -FixedHeader -PagingLength $healthcheckData.Count -Buttons @('copyHtml5', 'excelHtml5', 'csvHtml5', 'pdfHtml5') -DisablePaging
-    }
-
-    New-HTMLSection -HeaderBackGroundColor '#990AE3' -HeaderText "Report Information" {
+    New-HTMLSection -HeaderBackGroundColor $ThemeColor -HeaderText "Summary and Recommendations" -HeaderTextSize 40 {
         New-HTMLPanel {
+            New-HTMLText -Text "Summary Analysis" -Color $ThemeColor -FontSize 24 -FontWeight bold
+            
+            # Add logic to determine highest risk areas
+            $lowestScore = @($globalScore, $StaleScore, $privilegedScore, $trustscore, $AnomalyScore) | Measure-Object -Minimum | Select-Object -ExpandProperty Minimum
+            
+            # Better tracking of all low scores (not just the minimum)
+            $thresholdForHighRisk = 50
+            $highRiskAreas = @()
+            
+            if ($globalScore -lt $thresholdForHighRisk) { $highRiskAreas += "Overall Security" }
+            if ($StaleScore -lt $thresholdForHighRisk) { $highRiskAreas += "Stale Objects" }
+            if ($privilegedScore -lt $thresholdForHighRisk) { $highRiskAreas += "Privileged Access" }
+            if ($trustscore -lt $thresholdForHighRisk) { $highRiskAreas += "Trust Relationships" }
+            if ($AnomalyScore -lt $thresholdForHighRisk) { $highRiskAreas += "Security Anomalies" }
+            
+            $worstCategory = switch($lowestScore) {
+                $StaleScore { "Stale Objects" }
+                $privilegedScore { "Privileged Access" }
+                $trustscore { "Trust Relationships" }
+                $AnomalyScore { "Security Anomalies" }
+                default { "Overall Security" }
+            }
+            
+            # Dynamic coloring based on score severity
+            $priorityColor = if ($lowestScore -lt 30) { "darkred" } elseif ($lowestScore -lt 50) { "red" } elseif ($lowestScore -lt 70) { "orange" } else { "green" }
+            
+            New-HTMLText -Text "Priority Focus Area: $worstCategory (Score: $lowestScore)" -Color $priorityColor -FontSize 18 -FontWeight bold
+            
+            # Show all high risk areas if there are multiple
+            if ($highRiskAreas.Count -gt 1) {
+                New-HTMLText -Text "Additional High Risk Areas:" -Color $ThemeColor -FontSize 16
+                New-HTMLList -Type Unordered {
+                    foreach($area in $highRiskAreas | Where-Object {$_ -ne $worstCategory}) {
+                        $areaScore = switch($area) {
+                            "Stale Objects" { $StaleScore }
+                            "Privileged Access" { $privilegedScore }
+                            "Trust Relationships" { $trustscore }
+                            "Security Anomalies" { $AnomalyScore }
+                            default { $globalScore }
+                        }
+                        New-HTMLListItem -Text "$area (Score: $areaScore)"
+                    }
+                }
+            }
+            
+            New-HTMLText -Text "Top Recommendations:" -Color $ThemeColor -FontSize 20
+            
+            # Get top issues by points, including remediation guidance
+            $topIssues = $healthcheckData | Sort-Object -Property Points -Descending | Select-Object -First 5
+            
+            New-HTMLTable -DataTable $topIssues -HideButtons {
+                New-TableHeader -Color White -BackGroundColor $ThemeColor
+                New-TableCondition -Name "Points" -ComparisonType number -Operator gt -Value 30 -Color Red -Row
+                New-TableCondition -Name "Points" -ComparisonType number -Operator gt -Value 20 -Color Orange -Row
+                New-TableCondition -Name "Points" -ComparisonType number -Operator le -Value 20 -Color Green -Row
+            }
+            
+            # Executive summary with progress tracking
+            New-HTMLText -Text "Action Plan Timeline" -Color $ThemeColor -FontSize 18
+            New-HTMLText -Text "Below is a recommended timeline to address the key findings:" -FontSize 14
+            
             New-HTMLList -Type Ordered {
-                New-HTMLListItem -Text "Report generated on: $currentDateTime (UTC)"
-                New-HTMLListItem -Text "Generated by: $currentUser"
-                New-HTMLListItem -Text "Total records analyzed: $($healthcheckData.Count)"
+                New-HTMLListItem -Text "Immediate (0-30 days): Address priority focus area ($worstCategory)"
+                New-HTMLListItem -Text "Short-term (30-60 days): Remediate top 3 issues by risk points"
+                New-HTMLListItem -Text "Medium-term (60-90 days): Address additional high-risk areas"
+                New-HTMLListItem -Text "Long-term: Implement regular security assessment cycles"
             }
         }
     }
-} -ShowHTML
+}
+
