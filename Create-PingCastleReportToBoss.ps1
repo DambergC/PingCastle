@@ -16,7 +16,7 @@ param(
     [switch]$IncludeComparisonWithPrevious
 )
 
-# Read the XML file
+# Read the XML filess
 if(!(Test-Path $XmlPath)) {
     Write-Error "XML file not found: $XmlPath"
     exit 1
