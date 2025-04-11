@@ -73,7 +73,7 @@ try {
 function Get-ScoreColor {
     param([int]$Score)
     
-    if ($Score -ge 80) { return "green" }
+    if ($Score -ge 17) { return "green" }
     elseif ($Score -ge 50) { return "orange" }
     else { return "red" }
 }
