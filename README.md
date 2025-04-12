@@ -14,7 +14,7 @@ This script generates comprehensive HTML reports from PingCastle security assess
 
 ## Requirements
 
-- PowerShell 5.1 or higher
+- PowerShell 7
 - PingCastle XML output file
 - PSWriteHTML module (auto-installed if missing)
 - Optional: PSWritePDF module for PDF export
