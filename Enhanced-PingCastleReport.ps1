@@ -268,7 +268,7 @@ New-HTML -TitleText "PingCastle Healthcheck Report - $domain" -Online -FilePath 
                 ) {
                     New-TableHeader -Color White -BackGroundColor $ThemeColor
                     New-TableCondition -Name "Score" -ComparisonType number -Operator ge -Value 50 -Color "red" -Row
-                    New-TableCondition -Name "Score" -ComparisonType number -Operator ge -Value 20 -Operator2 lt -Value2 50 -Color "orange" -Row
+                    New-TableCondition -Name "Score" -ComparisonType number -Operator betweeninclusive -Value @(20, 50) -Color "orange" -Row
                     New-TableCondition -Name "Score" -ComparisonType number -Operator lt -Value 20 -Color "green" -Row
                 }
             }
