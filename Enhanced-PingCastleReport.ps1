@@ -225,10 +225,10 @@ if ($IncludeComparisonWithPrevious) {
 New-HTML -TitleText "PingCastle Healthcheck Report - $domain" -Online -FilePath $OutputPath {
     
     New-HTMLHeader {
-        New-HTMLSection -AlignContent center -HeaderTextAlignment center -HeaderText "PingCastle Security Assessment Report" -HeaderTextSize 60 -HeaderBackGroundColor $ThemeColor {
+        New-HTMLSection -AlignContent center -HeaderTextAlignment center -HeaderText "PingCastle Security Assessment Report" -HeaderTextSize 50 -HeaderBackGroundColor $ThemeColor {
             
             New-HTMLText -Text $LogoHTMLCompany
-            New-HTMLText -Text $LogoHTMLPingCastle 
+            New-HTMLText -Text $LogoHTMLPingCastle
 
 
         }
