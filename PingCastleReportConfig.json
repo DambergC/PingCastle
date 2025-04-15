@@ -1,0 +1,7 @@
+{
+  "HighRiskThreshold": 50,
+  "Company": "Telia Cygate AB",
+  "OutputPath": "HealthcheckReport.html",
+  "ThemeColor": "#990AE3",
+  "XmlPath": ".\\ad_hc_int.vxops.se.xml"
+}

@@ -41,10 +41,13 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$false)]
+    [string]$company = "Telia Cygate AB",
+
+    [Parameter(Mandatory=$false)]
     [string]$XmlPath = ".\ad_hc_int.vxops.se.xml",
     
     [Parameter(Mandatory=$false)]
-    [string]$OutputPath = "HealthcheckReport.html",
+    [string]$OutputPath = ".\HealthcheckReport.html",
     
     [Parameter(Mandatory=$false)]
     [string]$ThemeColor = "#990AE3",
@@ -53,14 +56,10 @@ param(
     [int]$HighRiskThreshold = 50,
     
     [Parameter(Mandatory=$false)]
-    [switch]$IncludeComparisonWithPrevious,
-    
-    [Parameter(Mandatory=$false)]
     [string]$ConfigPath = ".\PingCastleReportConfig.json",
     
     [Parameter(Mandatory=$false)]
-    [string]$SaveTemplateAs
-)
+    [string]$SaveTemplateAs = ".\PingCastleReportConfig.json")
 
 # Read from config file if it exists
 if(Test-Path $ConfigPath) {
@@ -71,16 +70,9 @@ if(Test-Path $ConfigPath) {
         $OutputPath = $config.OutputPath ?? $OutputPath
         $ThemeColor = $config.ThemeColor ?? $ThemeColor
         $HighRiskThreshold = $config.HighRiskThreshold ?? $HighRiskThreshold
+        $company = $config.Company ?? $company
         
-        # For boolean switch parameters, special handling needed
-        if($null -ne $config.IncludeComparisonWithPrevious) {
-            $IncludeComparisonWithPrevious = [System.Convert]::ToBoolean($config.IncludeComparisonWithPrevious)
-        }
-        if($null -ne $config.ExportPDF) {
-            $ExportPDF = [System.Convert]::ToBoolean($config.ExportPDF)
-        }
-        
-        Write-Host "Configuration loaded from $ConfigPath" -ForegroundColor Green
+         Write-Host "Configuration loaded from $ConfigPath" -ForegroundColor Green
     } catch {
         Write-Warning "Error reading config file. Using default parameters: $_"
     }
@@ -100,8 +92,7 @@ if($SaveTemplateAs) {
         OutputPath = $OutputPath
         ThemeColor = $ThemeColor
         HighRiskThreshold = $HighRiskThreshold
-        IncludeComparisonWithPrevious = $IncludeComparisonWithPrevious.IsPresent
-        ExportPDF = $ExportPDF.IsPresent
+        Company = $company
     }
     
     try {
@@ -183,37 +174,6 @@ $currentDateTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 $currentUser = $env:USERNAME
 $reportDate = Get-Date -Format "yyyy-MM-dd"
 
-# Historical tracking (if enabled)
-$historyFile = ".\PingCastle_ScoreHistory.csv"
-$showTrends = $false
-
-if ($IncludeComparisonWithPrevious -and (Test-Path $historyFile)) {
-    $scoreHistory = Import-Csv -Path $historyFile
-    $previousEntry = $scoreHistory | Sort-Object -Property Date -Descending | Select-Object -First 1
-    $showTrends = $true
-}
-
-# Save current scores for historical tracking
-$newHistoryEntry = [PSCustomObject]@{
-    Date = $reportDate
-    Domain = $domain
-    GlobalScore = $globalScore
-    StaleScore = $StaleScore
-    PrivilegiedGroupScore = $PrivilegiedGroupScore
-    TrustScore = $trustscore
-    AnomalyScore = $AnomalyScore
-}
-
-if ($IncludeComparisonWithPrevious) {
-    if (Test-Path $historyFile) {
-        $scoreHistory = Import-Csv -Path $historyFile
-        $scoreHistory += $newHistoryEntry
-        $scoreHistory | Export-Csv -Path $historyFile -NoTypeInformation
-    } else {
-        $newHistoryEntry | Export-Csv -Path $historyFile -NoTypeInformation
-        Write-Host "Created new score history file at $historyFile" -ForegroundColor Green
-    }
-}
 
 # Make styling more flexible by parameterizing colors and styles
 New-HTML -TitleText "PingCastle Healthcheck Report - $domain" -Online -FilePath $OutputPath {
@@ -223,16 +183,7 @@ New-HTML -TitleText "PingCastle Healthcheck Report - $domain" -Online -FilePath 
             
             New-HTMLText -Text $LogoHTMLCompany
             New-HTMLText -Text $LogoHTMLPingCastle
-
-
         }
-        
-        
-        
-
-            
-
-
     }
     New-HTMLSection -HeaderText "Global Score - $domain"-HeaderTextSize 40 -HeaderBackGroundColor $ThemeColor  {
         New-HTMLPanel {
@@ -240,9 +191,7 @@ New-HTML -TitleText "PingCastle Healthcheck Report - $domain" -Online -FilePath 
             New-HTMLText -Text $globalScore -Color (Get-ScoreColor $globalScore) -FontSize 120 -Alignment center -FontWeight bolder
         }
     }
-
     New-HTMLSection -HeaderText "Section Score"-HeaderTextSize 24 -HeaderBackGroundColor $ThemeColor  {
-
         New-HTMLPanel {
             New-HTMLText -Text "Stale Objects" -Color $ThemeColor -FontSize 20 -FontWeight bold -Alignment center  
             New-HTMLText -Text $StaleScore -Color (Get-ScoreColor $StaleScore) -FontSize 80 -Alignment center -FontWeight bolder          
@@ -251,19 +200,15 @@ New-HTML -TitleText "PingCastle Healthcheck Report - $domain" -Online -FilePath 
             New-HTMLText -Text "Privileged Account" -Color $ThemeColor -FontSize 20 -FontWeight bold -Alignment center  
             New-HTMLText -Text $PrivilegiedGroupScore -Color (Get-ScoreColor $PrivilegiedGroupScore) -FontSize 80 -Alignment center -FontWeight bolder          
         }
-
         New-HTMLPanel {
             New-HTMLText -Text "Trust Relationships" -Color $ThemeColor -FontSize 20 -FontWeight bold -Alignment center
             New-HTMLText -Text $trustscore -Color (Get-ScoreColor $trustscore) -FontSize 80 -Alignment center -FontWeight bolder           
         }
-
         New-HTMLPanel {
             New-HTMLText -Text "Security Anomalies" -Color $ThemeColor -FontSize 20 -FontWeight bold -Alignment center  
             New-HTMLText -Text $AnomalyScore -Color (Get-ScoreColor $AnomalyScore) -FontSize 80 -Alignment center -FontWeight bolder          
         }
-
     }
-
     New-HTMLSection -HeaderBackGroundColor $ThemeColor -HeaderText "Summary and Recommendations" {
         New-HTMLPanel {
             New-HTMLText -Text "Summary Analysis" -Color $ThemeColor -FontSize 24 -FontWeight bold
@@ -349,7 +294,7 @@ New-HTML -TitleText "PingCastle Healthcheck Report - $domain" -Online -FilePath 
     
     New-HTMLFooter {
         New-HTMLText -Text "Report generated from PingCastle data on $currentDateTime by $currentUser" -Color gray -FontSize 10 -Alignment center
-        New-HTMLText -Text "© $(Get-Date -Format yyyy) YourCompany - For internal use only" -Color gray -FontSize 10 -Alignment center
+        New-HTMLText -Text "© $(Get-Date -Format yyyy) $company - For internal use only" -Color gray -FontSize 10 -Alignment center
         New-HTMLText -Text "SCALE: 0 = GOOD, 100 = CRITICAL" -Color black -FontWeight bold -FontSize 12 -Alignment center
     }
 }

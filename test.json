@@ -1,8 +1,0 @@
-{
-  "ThemeColor": "#990AE3",
-  "ExportPDF": false,
-  "OutputPath": "HealthcheckReport.html",
-  "HighRiskThreshold": 50,
-  "XmlPath": ".\\ad_hc_int.vxops.se.xml",
-  "IncludeComparisonWithPrevious": false
-}
