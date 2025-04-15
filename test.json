@@ -4,5 +4,5 @@
   "OutputPath": "HealthcheckReport.html",
   "HighRiskThreshold": 50,
   "XmlPath": ".\\ad_hc_int.vxops.se.xml",
-  "IncludeComparisonWithPrevious": true
+  "IncludeComparisonWithPrevious": false
 }

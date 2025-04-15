@@ -227,14 +227,14 @@ New-HTML -TitleText "PingCastle Healthcheck Report - $domain" -Online -FilePath 
         New-HTMLText -Text "Domain Controller: $dcName" -FontSize 12
     }
     
-    New-HTMLSection -HeaderText "Executive Dashboard" -HeaderBackGroundColor $ThemeColor -CanCollapse {
+    New-HTMLSection -HeaderText "Executive Dashboard" -HeaderBackGroundColor $ThemeColor  {
         New-HTMLPanel {
             New-HTMLText -Text "Domain Security Scores" -Color $ThemeColor -FontSize 20 -FontWeight bold
             New-HTMLText -Text "(Lower scores are better - 0 is perfect, 100 is critical)" -FontSize 14 -FontStyle italic
             
             # Create a grid layout for scores - using compatible parameter
             New-HTMLPanel {
-                New-HTMLTable -DataTable @(
+                New-HTMLTable -HideButtons -DisableSearch -DisablePaging -DataTable @(
                     [PSCustomObject]@{
                         "Score Type" = "Global Score"
                         "Score" = $globalScore
@@ -278,7 +278,7 @@ New-HTML -TitleText "PingCastle Healthcheck Report - $domain" -Online -FilePath 
                 New-HTMLText -Text "Score Trends" -Color $ThemeColor -FontSize 18 -FontWeight bold
                 
                 New-HTMLPanel {
-                    New-HTMLTable -DataTable @(
+                    New-HTMLTable -HideButtons -DisablePaging -DisableSearch -DataTable @(
                         [PSCustomObject]@{
                             "Score Type" = "Global Score"
                             "Previous" = [int]$previousEntry.GlobalScore
@@ -324,7 +324,7 @@ New-HTML -TitleText "PingCastle Healthcheck Report - $domain" -Online -FilePath 
         }
     }
 
-    New-HTMLSection -HeaderBackGroundColor $ThemeColor -HeaderText "Summary and Recommendations" -CanCollapse {
+    New-HTMLSection -HeaderBackGroundColor $ThemeColor -HeaderText "Summary and Recommendations" {
         New-HTMLPanel {
             New-HTMLText -Text "Summary Analysis" -Color $ThemeColor -FontSize 24 -FontWeight bold
             
@@ -376,7 +376,7 @@ New-HTML -TitleText "PingCastle Healthcheck Report - $domain" -Online -FilePath 
             # Get top issues by points, including remediation guidance
             $topIssues = $healthcheckData | Sort-Object -Property Points -Descending | Select-Object -First 5
             
-            New-HTMLTable -DataTable $topIssues -HideButtons {
+            New-HTMLTable -DataTable $topIssues -HideButtons -DisablePaging -DisableSearch {
                 New-TableHeader -Color White -BackGroundColor $ThemeColor
                 New-TableCondition -Name "Points" -ComparisonType number -Operator gt -Value 30 -Color Red -Row
                 New-TableCondition -Name "Points" -ComparisonType number -Operator gt -Value 20 -Color Orange -Row
@@ -396,9 +396,9 @@ New-HTML -TitleText "PingCastle Healthcheck Report - $domain" -Online -FilePath 
         }
     }
     
-    New-HTMLSection -HeaderBackGroundColor $ThemeColor -HeaderText "Detailed Risk Analysis" -CanCollapse {
+    New-HTMLSection -HeaderBackGroundColor $ThemeColor -HeaderText "Detailed Risk Analysis" {
         New-HTMLPanel {
-            New-HTMLTable -DataTable $healthcheckData -AllProperties -HideButtons {
+            New-HTMLTable -DataTable $healthcheckData -AllProperties -HideButtons -DisableSearch -DisablePaging {
                 New-TableHeader -Color White -BackGroundColor $ThemeColor
                 New-TableCondition -Name "Points" -ComparisonType number -Operator gt -Value 30 -Color Red -Row
                 New-TableCondition -Name "Points" -ComparisonType number -Operator gt -Value 20 -Color Orange -Row
