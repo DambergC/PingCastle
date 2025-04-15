@@ -28,9 +28,6 @@
 .PARAMETER ConfigPath
     Path to JSON configuration file for report settings.
 
-.PARAMETER ExportPDF
-    Export the report as PDF in addition to HTML.
-
 .PARAMETER SaveTemplateAs
     Save current configuration as a template.
 
@@ -60,9 +57,6 @@ param(
     
     [Parameter(Mandatory=$false)]
     [string]$ConfigPath = ".\PingCastleReportConfig.json",
-    
-    [Parameter(Mandatory=$false)]
-    [switch]$ExportPDF,
     
     [Parameter(Mandatory=$false)]
     [string]$SaveTemplateAs
@@ -361,40 +355,3 @@ New-HTML -TitleText "PingCastle Healthcheck Report - $domain" -Online -FilePath 
 }
 
 Write-Output "Report generated successfully at $OutputPath"
-
-# Export to PDF if requested
-if ($ExportPDF) {
-    try {
-        # Check if the PSWritePDF module is available for PDF conversion
-        if (!(Get-Module -ListAvailable -Name PSWritePDF)) {
-            Write-Warning "PSWritePDF module not found. Attempting to install..."
-            Install-Module -Name PSWritePDF -Force -Scope CurrentUser
-        }
-        
-        Import-Module PSWritePDF
-        
-        # Convert HTML to PDF
-        $PDFPath = $OutputPath -replace "\.html$", ".pdf"
-        ConvertTo-PDF -Path (Get-Item $OutputPath).FullName -OutputPath $PDFPath -Encoding UTF8
-        
-        Write-Output "PDF report generated successfully at $PDFPath"
-    } catch {
-        Write-Error "Failed to generate PDF report: $_"
-        Write-Warning "You may need to install the PSWritePDF module manually or use a third-party HTML-to-PDF converter."
-    }
-}
-
-# Generate a QR code for the report if the module is available (additional feature)
-try {
-    if (Get-Module -ListAvailable -Name QRCodeGenerator) {
-        $QRPath = $OutputPath -replace "\.html$", "_QR.png"
-        $reportFullPath = (Get-Item $OutputPath).FullName
-        
-        Import-Module QRCodeGenerator
-        New-QRCodeFile -Content "file://$reportFullPath" -OutPath $QRPath -Width 300 -Height 300
-        Write-Output "QR code for report access generated at $QRPath"
-    }
-} catch {
-    # Non-critical feature, just continue if it fails
-    Write-Verbose "QR code generation skipped: QRCodeGenerator module not available or error occurred."
-}
