@@ -92,6 +92,13 @@ if(Test-Path $ConfigPath) {
     }
 }
 
+$LogoBase64PingCastle = [Convert]::ToBase64String((Get-Content -Path .\Image\PingCastle.png -AsByteStream))
+$LogoHTMLPingCastle = "<img src='data:image/png;base64,$LogoBase64Pingcastle' style='width: 150px; height: auto;'>"
+
+$LogoBase64Company = [Convert]::ToBase64String((Get-Content -Path .\Image\TeliaCygate.png -AsByteStream))
+$LogoHTMLCompany = "<img src='data:image/png;base64,$LogoBase64Company' style='width: 300px; height: auto;'>"
+
+
 # Save current configuration as template if requested
 if($SaveTemplateAs) {
     $template = @{
@@ -123,13 +130,11 @@ try {
     
     # Extract core domain information
     $domain = $data.HealthcheckData.DomainFQDN
-    $domainNetbios = $data.HealthcheckData.NetBIOSName
-    $dcName = $data.HealthcheckData.DCName
-    
+        
     # Extract scores
     $globalScore = [int]$data.HealthcheckData.GlobalScore
     $StaleScore = [int]$data.HealthcheckData.StaleObjectsScore
-    $privilegedScore = [int]$data.HealthcheckData.PrivilegedScore
+    $PrivilegiedGroupScore = [int]$data.HealthcheckData.PrivilegiedGroupScore
     $trustscore = [int]$data.HealthcheckData.TrustScore
     $AnomalyScore = [int]$data.HealthcheckData.AnomalyScore
     
@@ -142,7 +147,6 @@ try {
             Model = $risk.Model
             Points = [int]$risk.Points
             Rationale = $risk.Rationale
-            RecommendedFix = $risk.Documentation
         }
     }
     
@@ -175,8 +179,8 @@ try {
 function Get-ScoreColor {
     param([int]$Score)
     
-    if ($Score -lt 20) { return "green" }
-    elseif ($Score -lt 50) { return "orange" }
+    if ($Score -lt 16) { return "green" }
+    elseif ($Score -lt 31) { return "orange" }
     else { return "red" }
 }
 
@@ -201,7 +205,7 @@ $newHistoryEntry = [PSCustomObject]@{
     Domain = $domain
     GlobalScore = $globalScore
     StaleScore = $StaleScore
-    PrivilegedScore = $privilegedScore
+    PrivilegiedGroupScore = $PrivilegiedGroupScore
     TrustScore = $trustscore
     AnomalyScore = $AnomalyScore
 }
@@ -221,107 +225,49 @@ if ($IncludeComparisonWithPrevious) {
 New-HTML -TitleText "PingCastle Healthcheck Report - $domain" -Online -FilePath $OutputPath {
     
     New-HTMLHeader {
-        New-HTMLText -Text "PingCastle Security Assessment Report" -Color $ThemeColor -FontSize 24 -FontWeight bold
-        New-HTMLText -Text "Domain: $domain ($domainNetbios)" -FontSize 14
-        New-HTMLText -Text "Generated: $currentDateTime by $currentUser" -FontSize 12 -FontStyle italic
-        New-HTMLText -Text "Domain Controller: $dcName" -FontSize 12
-    }
-    
-    New-HTMLSection -HeaderText "Executive Dashboard" -HeaderBackGroundColor $ThemeColor  {
-        New-HTMLPanel {
-            New-HTMLText -Text "Domain Security Scores" -Color $ThemeColor -FontSize 20 -FontWeight bold
-            New-HTMLText -Text "(Lower scores are better - 0 is perfect, 100 is critical)" -FontSize 14 -FontStyle italic
+        New-HTMLSection -AlignContent center -HeaderTextAlignment center -HeaderText "PingCastle Security Assessment Report" -HeaderTextSize 60 -HeaderBackGroundColor $ThemeColor {
             
-            # Create a grid layout for scores - using compatible parameter
-            New-HTMLPanel {
-                New-HTMLTable -HideButtons -DisableSearch -DisablePaging -DataTable @(
-                    [PSCustomObject]@{
-                        "Score Type" = "Global Score"
-                        "Score" = $globalScore
-                        "Status" = if ($globalScore -lt 20) { "Good" } elseif ($globalScore -lt 50) { "Warning" } else { "Critical" }
-                        "Color" = Get-ScoreColor $globalScore
-                    },
-                    [PSCustomObject]@{
-                        "Score Type" = "Stale Objects"
-                        "Score" = $StaleScore
-                        "Status" = if ($StaleScore -lt 20) { "Good" } elseif ($StaleScore -lt 50) { "Warning" } else { "Critical" }
-                        "Color" = Get-ScoreColor $StaleScore
-                    },
-                    [PSCustomObject]@{
-                        "Score Type" = "Privileged Access"
-                        "Score" = $privilegedScore
-                        "Status" = if ($privilegedScore -lt 20) { "Good" } elseif ($privilegedScore -lt 50) { "Warning" } else { "Critical" }
-                        "Color" = Get-ScoreColor $privilegedScore
-                    },
-                    [PSCustomObject]@{
-                        "Score Type" = "Trust Relationships"
-                        "Score" = $trustscore
-                        "Status" = if ($trustscore -lt 20) { "Good" } elseif ($trustscore -lt 50) { "Warning" } else { "Critical" }
-                        "Color" = Get-ScoreColor $trustscore
-                    },
-                    [PSCustomObject]@{
-                        "Score Type" = "Security Anomalies"
-                        "Score" = $AnomalyScore
-                        "Status" = if ($AnomalyScore -lt 20) { "Good" } elseif ($AnomalyScore -lt 50) { "Warning" } else { "Critical" }
-                        "Color" = Get-ScoreColor $AnomalyScore
-                    }
-                ) {
-                    New-TableHeader -Color White -BackGroundColor $ThemeColor
-                    New-TableCondition -Name "Score" -ComparisonType number -Operator ge -Value 50 -Color "red" -Row
-                    New-TableCondition -Name "Score" -ComparisonType number -Operator betweeninclusive -Value @(20, 50) -Color "orange" -Row
-                    New-TableCondition -Name "Score" -ComparisonType number -Operator lt -Value 20 -Color "green" -Row
-                }
-            }
-            
-            # Show historical trends if enabled
-            if ($showTrends) {
-                New-HTMLText -Text "Score Trends" -Color $ThemeColor -FontSize 18 -FontWeight bold
-                
-                New-HTMLPanel {
-                    New-HTMLTable -HideButtons -DisablePaging -DisableSearch -DataTable @(
-                        [PSCustomObject]@{
-                            "Score Type" = "Global Score"
-                            "Previous" = [int]$previousEntry.GlobalScore
-                            "Current" = $globalScore
-                            "Change" = $globalScore - [int]$previousEntry.GlobalScore
-                            "Trend" = if (($globalScore - [int]$previousEntry.GlobalScore) -lt 0) { "Improved" } elseif (($globalScore - [int]$previousEntry.GlobalScore) -gt 0) { "Degraded" } else { "No Change" }
-                        },
-                        [PSCustomObject]@{
-                            "Score Type" = "Stale Objects"
-                            "Previous" = [int]$previousEntry.StaleScore
-                            "Current" = $StaleScore
-                            "Change" = $StaleScore - [int]$previousEntry.StaleScore
-                            "Trend" = if (($StaleScore - [int]$previousEntry.StaleScore) -lt 0) { "Improved" } elseif (($StaleScore - [int]$previousEntry.StaleScore) -gt 0) { "Degraded" } else { "No Change" }
-                        },
-                        [PSCustomObject]@{
-                            "Score Type" = "Privileged Access"
-                            "Previous" = [int]$previousEntry.PrivilegedScore
-                            "Current" = $privilegedScore
-                            "Change" = $privilegedScore - [int]$previousEntry.PrivilegedScore
-                            "Trend" = if (($privilegedScore - [int]$previousEntry.PrivilegedScore) -lt 0) { "Improved" } elseif (($privilegedScore - [int]$previousEntry.PrivilegedScore) -gt 0) { "Degraded" } else { "No Change" }
-                        },
-                        [PSCustomObject]@{
-                            "Score Type" = "Trust Relationships"
-                            "Previous" = [int]$previousEntry.TrustScore
-                            "Current" = $trustscore
-                            "Change" = $trustscore - [int]$previousEntry.TrustScore
-                            "Trend" = if (($trustscore - [int]$previousEntry.TrustScore) -lt 0) { "Improved" } elseif (($trustscore - [int]$previousEntry.TrustScore) -gt 0) { "Degraded" } else { "No Change" }
-                        },
-                        [PSCustomObject]@{
-                            "Score Type" = "Security Anomalies"
-                            "Previous" = [int]$previousEntry.AnomalyScore
-                            "Current" = $AnomalyScore
-                            "Change" = $AnomalyScore - [int]$previousEntry.AnomalyScore
-                            "Trend" = if (($AnomalyScore - [int]$previousEntry.AnomalyScore) -lt 0) { "Improved" } elseif (($AnomalyScore - [int]$previousEntry.AnomalyScore) -gt 0) { "Degraded" } else { "No Change" }
-                        }
-                    ) {
-                        New-TableHeader -Color White -BackGroundColor $ThemeColor
-                        New-TableCondition -Name "Change" -ComparisonType number -Operator lt -Value 0 -Color "green" -Row
-                        New-TableCondition -Name "Change" -ComparisonType number -Operator gt -Value 0 -Color "red" -Row
-                    }
-                }
-            }
+            New-HTMLText -Text $LogoHTMLCompany
+            New-HTMLText -Text $LogoHTMLPingCastle 
+
+
         }
+        
+        
+        
+
+            
+
+
+    }
+    New-HTMLSection -HeaderText "Global Score - $domain"-HeaderTextSize 40 -HeaderBackGroundColor $ThemeColor  {
+        New-HTMLPanel {
+            
+            New-HTMLText -Text $globalScore -Color (Get-ScoreColor $globalScore) -FontSize 120 -Alignment center -FontWeight bolder
+        }
+    }
+
+    New-HTMLSection -HeaderText "Section Score"-HeaderTextSize 24 -HeaderBackGroundColor $ThemeColor  {
+
+        New-HTMLPanel {
+            New-HTMLText -Text "Stale Objects" -Color $ThemeColor -FontSize 20 -FontWeight bold -Alignment center  
+            New-HTMLText -Text $StaleScore -Color (Get-ScoreColor $StaleScore) -FontSize 80 -Alignment center -FontWeight bolder          
+        }
+        New-HTMLPanel {
+            New-HTMLText -Text "Privileged Account" -Color $ThemeColor -FontSize 20 -FontWeight bold -Alignment center  
+            New-HTMLText -Text $PrivilegiedGroupScore -Color (Get-ScoreColor $PrivilegiedGroupScore) -FontSize 80 -Alignment center -FontWeight bolder          
+        }
+
+        New-HTMLPanel {
+            New-HTMLText -Text "Trust Relationships" -Color $ThemeColor -FontSize 20 -FontWeight bold -Alignment center
+            New-HTMLText -Text $trustscore -Color (Get-ScoreColor $trustscore) -FontSize 80 -Alignment center -FontWeight bolder           
+        }
+
+        New-HTMLPanel {
+            New-HTMLText -Text "Security Anomalies" -Color $ThemeColor -FontSize 20 -FontWeight bold -Alignment center  
+            New-HTMLText -Text $AnomalyScore -Color (Get-ScoreColor $AnomalyScore) -FontSize 80 -Alignment center -FontWeight bolder          
+        }
+
     }
 
     New-HTMLSection -HeaderBackGroundColor $ThemeColor -HeaderText "Summary and Recommendations" {
