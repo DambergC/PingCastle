@@ -85,12 +85,13 @@ $buttonCreateMSA.Text = 'Create New MSA'
 # Create New MSA Button Event Handler
 
 # Create New MSA Button Event Handler
+# Create New MSA Button Event Handler
 $buttonCreateMSA.Add_Click({
     if ($textBoxMSAAccountName.Text -ne '') {
         try {
-            # Explicitly create an MSA without DNSHostName
-            New-ADServiceAccount -Name $textBoxMSAAccountName.Text -SAMAccountName $textBoxMSAAccountName.Text
-
+            # Explicitly create an MSA with -Type Standalone
+            New-ADServiceAccount -Name $textBoxMSAAccountName.Text -Type Standalone
+            
             [System.Windows.Forms.MessageBox]::Show(
                 "Managed Service Account $($textBoxMSAAccountName.Text) created successfully.",
                 "Success",
