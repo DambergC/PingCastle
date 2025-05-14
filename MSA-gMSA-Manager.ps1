@@ -83,10 +83,11 @@ $buttonCreateMSA.Location = New-Object System.Drawing.Point(20, 30)
 $buttonCreateMSA.Size = New-Object System.Drawing.Size(120, 50)
 $buttonCreateMSA.Text = 'Create New MSA'
 # Create New MSA Button Event Handler
+
 $buttonCreateMSA.Add_Click({
     if (($textBoxMSAAccountName.Text -ne '') -and ($textBoxMSADomain.Text -ne '')) {
         try {
-            # Corrected to create an MSA without gMSA-specific parameters
+            # Ensure only MSA-specific parameters are used
             New-ADServiceAccount -Name $textBoxMSAAccountName.Text
             [System.Windows.Forms.MessageBox]::Show(
                 "Managed Service Account $($textBoxMSAAccountName.Text) created successfully.",
@@ -112,6 +113,8 @@ $buttonCreateMSA.Add_Click({
         )
     }
 })
+
+
 $groupBoxMSAActions.Controls.Add($buttonCreateMSA)
 
 $buttonAssociateMSA = New-Object System.Windows.Forms.Button
