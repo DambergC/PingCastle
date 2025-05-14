@@ -88,8 +88,8 @@ $buttonCreateMSA.Text = 'Create New MSA'
 $buttonCreateMSA.Add_Click({
     if ($textBoxMSAAccountName.Text -ne '') {
         try {
-            # Ensure only MSA-specific parameters are used
-            New-ADServiceAccount -Name $textBoxMSAAccountName.Text
+            # Create the MSA with -RestrictToSingleComputer
+            New-ADServiceAccount -Name $textBoxMSAAccountName.Text -RestrictToSingleComputer
 
             [System.Windows.Forms.MessageBox]::Show(
                 "Managed Service Account $($textBoxMSAAccountName.Text) created successfully.",
