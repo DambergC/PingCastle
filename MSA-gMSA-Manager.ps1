@@ -161,7 +161,7 @@ function Get-MSAPrincipals {
         # Validate against msDS-HostServiceAccount attribute
         $computers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount
         foreach ($computer in $computers) {
-            if ($computer.msDS-HostServiceAccount -contains $msaObject.DistinguishedName) {
+            if ("$computer.msDS-HostServiceAccount" -contains $msaObject.DistinguishedName) {
                 $principalInfo = [PSCustomObject]@{
                     Name               = $computer.Name
                     Type               = "Computer"
@@ -574,12 +574,13 @@ function List-MSA {
             Write-Host "  Modified: $($msa.Modified)" -ForegroundColor White
 
             # Assigned Computers
-            $assignedComputers = @()
-            foreach ($computer in Get-ADComputer -Filter * -Properties msDS-HostServiceAccount) {
-                if ($computer.msDS-HostServiceAccount -contains $msa.DistinguishedName) {
-                    $assignedComputers += $computer.Name
-                }
-            }
+$assignedComputers = @()
+foreach ($computer in Get-ADComputer -Filter * -Properties msDS-HostServiceAccount) {
+    # Ensure the msDS-HostServiceAccount property is treated properly as an array
+    if ($computer."msDS-HostServiceAccount" -contains $msa.DistinguishedName) {
+        $assignedComputers += $computer.Name
+    }
+}
 
             if ($assignedComputers.Count -gt 0) {
                 Write-Host "  Assigned Computers: $($assignedComputers -join ', ')" -ForegroundColor Green
