@@ -125,75 +125,53 @@ function Get-MSAPrincipals {
         [Parameter(Mandatory=$true)]
         [string]$MSAName
     )
-    
+
     $principalsList = @()
-    
+
     try {
         # Get the MSA object with all necessary properties
-        $msaObject = Get-ADServiceAccount -Identity $MSAName -Properties *
-        
-        # First check PrincipalsAllowedToRetrieveManagedPassword property
+        $msaObject = Get-ADServiceAccount -Identity $MSAName -Properties PrincipalsAllowedToRetrieveManagedPassword
+
+        # Check PrincipalsAllowedToRetrieveManagedPassword property
         if ($msaObject.PrincipalsAllowedToRetrieveManagedPassword) {
             foreach ($principalDN in $msaObject.PrincipalsAllowedToRetrieveManagedPassword) {
                 try {
                     $principal = Get-ADObject -Identity $principalDN -Properties Name, ObjectClass, sAMAccountName
                     $principalInfo = [PSCustomObject]@{
-                        Name = $principal.Name
-                        Type = $principal.ObjectClass
-                        SAMAccountName = $principal.sAMAccountName
-                        DistinguishedName = $principalDN
+                        Name               = $principal.Name
+                        Type               = $principal.ObjectClass
+                        SAMAccountName     = $principal.sAMAccountName
+                        DistinguishedName  = $principalDN
                     }
                     $principalsList += $principalInfo
                 }
                 catch {
                     # If we can't get the object details, at least store the DN
                     $principalInfo = [PSCustomObject]@{
-                        Name = ($principalDN -split ',')[0] -replace 'CN=',''
-                        Type = "Unknown"
-                        SAMAccountName = ""
-                        DistinguishedName = $principalDN
+                        Name               = ($principalDN -split ',')[0] -replace 'CN=',''
+                        Type               = "Unknown"
+                        SAMAccountName     = ""
+                        DistinguishedName  = $principalDN
                     }
                     $principalsList += $principalInfo
                 }
             }
         }
-        
-        # If no principals found, try a different method - search for computers with msDS-HostServiceAccountBL
-        if ($principalsList.Count -eq 0) {
-            Write-Verbose "No principals found in PrincipalsAllowedToRetrieveManagedPassword, searching computers..."
-            
-            # Get all computers and check if they have this MSA in their msDS-HostServiceAccountBL attribute
-            $allComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccountBL, Name, ObjectClass, sAMAccountName
-            
-            foreach ($computer in $allComputers) {
-                if ($computer.'msDS-HostServiceAccountBL' -contains $msaObject.DistinguishedName) {
-                    $principalInfo = [PSCustomObject]@{
-                        Name = $computer.Name
-                        Type = "computer"
-                        SAMAccountName = $computer.sAMAccountName
-                        DistinguishedName = $computer.DistinguishedName
-                    }
-                    $principalsList += $principalInfo
-                }
-            }
-        }
-        
-        # Also check for group memberships and security groups
-        $msaDN = $msaObject.DistinguishedName
-        $securityGroups = Get-ADGroup -Filter "member -eq '$msaDN'" -Properties Name, ObjectClass, sAMAccountName
-        
-        if ($securityGroups) {
-            foreach ($group in $securityGroups) {
+
+        # Validate against msDS-HostServiceAccount attribute
+        $computers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount
+        foreach ($computer in $computers) {
+            if ($computer.msDS-HostServiceAccount -contains $msaObject.DistinguishedName) {
                 $principalInfo = [PSCustomObject]@{
-                    Name = $group.Name
-                    Type = "group"
-                    SAMAccountName = $group.sAMAccountName
-                    DistinguishedName = $group.DistinguishedName
+                    Name               = $computer.Name
+                    Type               = "Computer"
+                    SAMAccountName     = $computer.sAMAccountName
+                    DistinguishedName  = $computer.DistinguishedName
                 }
                 $principalsList += $principalInfo
             }
         }
-        
+
         return $principalsList
     }
     catch {
@@ -560,97 +538,63 @@ function Install-MSA {
 function List-MSA {
     Clear-Host
     Write-Host "=== List Managed Service Accounts ===" -ForegroundColor Cyan
-    
+
     try {
         # Get MSAs with important properties
-        $msaAccounts = Get-ADServiceAccount -Filter * -Properties Name, DNSHostName, Enabled, Description, 
-                      Created, Modified, ServicePrincipalNames, PrincipalsAllowedToRetrieveManagedPassword,
-                      objectClass
-        
+        $msaAccounts = Get-ADServiceAccount -Filter * -Properties Name, DNSHostName, Enabled, Description,
+                      Created, Modified, ServicePrincipalNames, PrincipalsAllowedToRetrieveManagedPassword, objectClass
+
         if ($msaAccounts -eq $null -or ($msaAccounts -is [array] -and $msaAccounts.Count -eq 0)) {
             Write-Host "No Managed Service Accounts found." -ForegroundColor Yellow
             Read-Host "Press Enter to continue"
             return
         }
-        
+
         # Force into array if single item
         if (-not ($msaAccounts -is [array])) {
             $msaAccounts = @($msaAccounts)
         }
-        
+
         Write-Host "Found $($msaAccounts.Count) Managed Service Account(s):" -ForegroundColor Yellow
         Write-Host
 
-        $index = 0
         foreach ($msa in $msaAccounts) {
             # Determine if this is an sMSA or gMSA based on objectClass
             $msaType = "gMSA (Group Managed Service Account)"
             if ($msa.objectClass -contains "msDS-ManagedServiceAccount") {
                 $msaType = "sMSA (Standalone Managed Service Account)"
             }
-            
-            # Get computers/principals that can use this MSA
-            $principals = Get-MSAPrincipals -MSAName $msa.Name
-            $computers = $principals | Where-Object { $_.Type -eq "computer" } | Select-Object -ExpandProperty Name
-            
-            # Basic info with index number
-            Write-Host "[$index] $($msa.Name)" -ForegroundColor Cyan
+
+            # Basic info
+            Write-Host "Name: $($msa.Name)" -ForegroundColor Cyan
             Write-Host "  Type: $msaType" -ForegroundColor White
             Write-Host "  Enabled: $($msa.Enabled)" -ForegroundColor White
-            
-            if (-not [string]::IsNullOrEmpty($msa.Description)) {
-                Write-Host "  Description: $($msa.Description)" -ForegroundColor White
+            Write-Host "  Description: $($msa.Description)" -ForegroundColor White
+            Write-Host "  Created: $($msa.Created)" -ForegroundColor White
+            Write-Host "  Modified: $($msa.Modified)" -ForegroundColor White
+
+            # Assigned Computers
+            $assignedComputers = @()
+            foreach ($computer in Get-ADComputer -Filter * -Properties msDS-HostServiceAccount) {
+                if ($computer.msDS-HostServiceAccount -contains $msa.DistinguishedName) {
+                    $assignedComputers += $computer.Name
+                }
             }
-            
-            if ($msa.DNSHostName) {
-                Write-Host "  DNS Host Name: $($msa.DNSHostName)" -ForegroundColor White
-            }
-            
-            if ($msa.Created) {
-                Write-Host "  Created: $($msa.Created.ToString('yyyy-MM-dd HH:mm:ss'))" -ForegroundColor White
-            }
-            
-            if ($msa.Modified) {
-                Write-Host "  Modified: $($msa.Modified.ToString('yyyy-MM-dd HH:mm:ss'))" -ForegroundColor White
-            }
-            
-            # Display computers that can use this MSA
-            if ($computers -and $computers.Count -gt 0) {
-                Write-Host "  Assigned Computers: $($computers -join ', ')" -ForegroundColor White
+
+            if ($assignedComputers.Count -gt 0) {
+                Write-Host "  Assigned Computers: $($assignedComputers -join ', ')" -ForegroundColor Green
             } else {
                 Write-Host "  Assigned Computers: None" -ForegroundColor Yellow
             }
-            
-            # Display service principal names if available
-            if ($msa.ServicePrincipalNames -and $msa.ServicePrincipalNames.Count -gt 0) {
-                Write-Host "  Service Principal Names:" -ForegroundColor White
-                foreach ($spn in $msa.ServicePrincipalNames) {
-                    Write-Host "    - $spn" -ForegroundColor Gray
-                }
-            }
-            
-            $index++
+
             Write-Host
-        }
-        
-        # Option to view more details about a specific MSA
-        $viewDetail = Read-Host "`nEnter MSA number to view detailed information (or press Enter to continue)"
-        if (-not [string]::IsNullOrEmpty($viewDetail) -and [int]::TryParse($viewDetail, [ref]$null)) {
-            $detailIndex = [int]$viewDetail
-            if ($detailIndex -ge 0 -and $detailIndex -lt $msaAccounts.Count) {
-                # Use our dedicated function to display principals
-                View-MSAPrincipals -MSAName $msaAccounts[$detailIndex].Name
-            }
-            else {
-                Write-Host "Invalid selection." -ForegroundColor Red
-                Read-Host "Press Enter to continue"
-            }
         }
     }
     catch {
         Write-Host "Error retrieving MSAs: $_" -ForegroundColor Red
-        Read-Host "Press Enter to continue"
     }
+
+    Read-Host "Press Enter to continue"
 }
 
 # Function to get current username from whoami
