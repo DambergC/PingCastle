@@ -82,17 +82,34 @@ $buttonCreateMSA = New-Object System.Windows.Forms.Button
 $buttonCreateMSA.Location = New-Object System.Drawing.Point(20, 30)
 $buttonCreateMSA.Size = New-Object System.Drawing.Size(120, 50)
 $buttonCreateMSA.Text = 'Create New MSA'
+# Create New MSA Button Event Handler
 $buttonCreateMSA.Add_Click({
     if (($textBoxMSAAccountName.Text -ne '') -and ($textBoxMSADomain.Text -ne '')) {
         try {
-            New-ADServiceAccount -Name $textBoxMSAAccountName.Text -DNSHostName "$($textBoxMSAAccountName.Text).$($textBoxMSADomain.Text)" -PrincipalsAllowedToRetrieveManagedPassword "Domain Computers"
-            [System.Windows.Forms.MessageBox]::Show("Managed Service Account $($textBoxMSAAccountName.Text) created successfully.", "Success", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+            # Corrected to create an MSA without gMSA-specific parameters
+            New-ADServiceAccount -Name $textBoxMSAAccountName.Text
+            [System.Windows.Forms.MessageBox]::Show(
+                "Managed Service Account $($textBoxMSAAccountName.Text) created successfully.",
+                "Success",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Information
+            )
             RefreshMSAList
         } catch {
-            [System.Windows.Forms.MessageBox]::Show("Failed to create Managed Service Account: $_", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+            [System.Windows.Forms.MessageBox]::Show(
+                "Failed to create Managed Service Account: $_",
+                "Error",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Error
+            )
         }
     } else {
-        [System.Windows.Forms.MessageBox]::Show("Account name and domain are required.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        [System.Windows.Forms.MessageBox]::Show(
+            "Account name and domain are required.",
+            "Error",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        )
     }
 })
 $groupBoxMSAActions.Controls.Add($buttonCreateMSA)
