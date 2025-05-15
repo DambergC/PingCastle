@@ -349,15 +349,79 @@ function Modify-MSA {
 
         $modOption = Read-Host "Select an option"
 
+        
         switch ($modOption) {
-            "1" {
-                # Logic for adding computer principals
-                ...
+
+        "1" {
+    # Logic for adding computer principals
+    if ($selectedMSA.objectClass -contains "msDS-ManagedServiceAccount") {
+        # Get the computer to add
+        $computer = Read-Host "Enter computer name to add permission for"
+
+        # Find all currently assigned computers
+        $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount |
+                             Where-Object { $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName }
+
+        # Remove all existing assignments
+        if ($assignedComputers.Count -gt 0) {
+            foreach ($computerToRemove in $assignedComputers) {
+                try {
+                    Remove-ADComputerServiceAccount -Identity $computerToRemove.Name -ServiceAccount $selectedMSA.Name
+                    Write-Host "Removed $($computerToRemove.Name) from the MSA." -ForegroundColor Yellow
+                } catch {
+                    Write-Host "Failed to remove $($computerToRemove.Name) from the MSA. Error: $_" -ForegroundColor Red
+                }
             }
-            "2" {
-                # Logic for removing computer principals
-                ...
-            }
+        }
+
+        # Add the new computer to the MSA
+        try {
+            Add-ADComputerServiceAccount -Identity $computer -ServiceAccount $selectedMSA.Name
+            Write-Host "$computer now has exclusive permission to use $($selectedMSA.Name)." -ForegroundColor Green
+        } catch {
+            Write-Host "Failed to add $computer to MSA. Error: $_" -ForegroundColor Red
+        }
+    } else {
+        Write-Host "This option is only for standalone MSAs. Group MSAs must be assigned to AD groups." -ForegroundColor Red
+    }
+}
+"2" {
+    # Logic for removing computer principals
+    $principals = Get-MSAPrincipals -MSAName $selectedMSA.Name
+    $computers = $principals | Where-Object { $_.Type -eq "Computer" } | Select-Object -ExpandProperty Name
+
+    if ($computers.Count -eq 0) {
+        Write-Host "No computers are currently assigned to this MSA." -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host "Computers with permission to use this MSA:" -ForegroundColor Yellow
+    for ($i = 0; $i -lt $computers.Count; $i++) {
+        Write-Host "[$i] $($computers[$i])"
+    }
+
+    $computerIndex = Read-Host "Enter the number of the computer to remove (or 'c' to cancel)"
+    if ($computerIndex -eq 'c') { return }
+
+    if ([int]::TryParse($computerIndex, [ref]$null) -and $computerIndex -ge 0 -and $computerIndex -lt $computers.Count) {
+        $selectedComputer = $computers[$computerIndex]
+        try {
+            Remove-ADComputerServiceAccount -Identity $selectedComputer -ServiceAccount $selectedMSA.Name -Confirm:$false
+            Write-Host "Permission for $selectedComputer removed from $($selectedMSA.Name)." -ForegroundColor Green
+        } catch {
+            Write-Host "Failed to remove $selectedComputer from $($selectedMSA.Name). Error: $_" -ForegroundColor Red
+        }
+    } else {
+        Write-Host "Invalid selection number." -ForegroundColor Red
+    }
+}
+
+
+
+
+
+
+             
             "3" {
                 $description = Read-Host "Enter new description"
                 Set-ADServiceAccount -Identity $selectedMSA.Name -Description $description
