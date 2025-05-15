@@ -234,7 +234,7 @@ function Get-MSAPrincipals {
     }
 }
 
-# Function to view MSA computer principals
+# Function to view MSA computer principals (Updated)
 function View-MSAPrincipals {
     param(
         [Parameter(Mandatory=$true)]
@@ -257,13 +257,16 @@ function View-MSAPrincipals {
         if ($msaObject.ObjectClass -contains "msDS-ManagedServiceAccount") {
             Write-Host "`nStandalone Managed Service Account (sMSA) detected." -ForegroundColor Yellow
             
-            # Find computers where this sMSA is assigned
-            $assignedComputers = Get-ADComputer -Filter {msDS-HostServiceAccount -eq $msaObject.DistinguishedName} -Properties msDS-HostServiceAccount
-
-            if ($assignedComputers.Count -gt 0) {
+            # Find computers where this sMSA is assigned using msDS-HostServiceAccountBL
+            if ($msaObject."msDS-HostServiceAccountBL") {
                 Write-Host "`nComputers assigned to this sMSA:" -ForegroundColor Yellow
-                foreach ($computer in $assignedComputers) {
-                    Write-Host "  - $($computer.Name)" -ForegroundColor White
+                foreach ($computerDN in $msaObject."msDS-HostServiceAccountBL") {
+                    try {
+                        $computer = Get-ADComputer -Identity $computerDN -Properties Name
+                        Write-Host "  - $($computer.Name)" -ForegroundColor White
+                    } catch {
+                        Write-Host "  - Unable to resolve computer with DN: $computerDN" -ForegroundColor Red
+                    }
                 }
             } else {
                 Write-Host "`nNo computers are currently assigned to this sMSA." -ForegroundColor Yellow
@@ -274,15 +277,28 @@ function View-MSAPrincipals {
         elseif ($msaObject.ObjectClass -contains "msDS-GroupManagedServiceAccount") {
             Write-Host "`nGroup Managed Service Account (gMSA) detected." -ForegroundColor Yellow
             
-            # Check PrincipalsAllowedToRetrieveManagedPassword property
+            # Check PrincipalsAllowedToRetrieveManagedPassword property for associated AD groups
             if ($msaObject.PrincipalsAllowedToRetrieveManagedPassword) {
                 Write-Host "`nAssociated AD Group(s):" -ForegroundColor Yellow
                 foreach ($principalDN in $msaObject.PrincipalsAllowedToRetrieveManagedPassword) {
                     try {
                         $principal = Get-ADObject -Identity $principalDN -Properties Name
                         Write-Host "  - $($principal.Name)" -ForegroundColor White
+                        
+                        # Resolve members of the group to find computers
+                        if ($principal.ObjectClass -eq "group") {
+                            $groupMembers = Get-ADGroupMember -Identity $principal.Name -Recursive | Where-Object { $_.ObjectClass -eq "computer" }
+                            if ($groupMembers.Count -gt 0) {
+                                Write-Host "    Computers in group:" -ForegroundColor Green
+                                foreach ($member in $groupMembers) {
+                                    Write-Host "      - $($member.Name)" -ForegroundColor White
+                                }
+                            } else {
+                                Write-Host "    No computers found in this group." -ForegroundColor Yellow
+                            }
+                        }
                     } catch {
-                        Write-Host "  - $principalDN (could not resolve)" -ForegroundColor Red
+                        Write-Host "  - Unable to resolve group with DN: $principalDN" -ForegroundColor Red
                     }
                 }
             } else {
@@ -299,6 +315,91 @@ function View-MSAPrincipals {
     }
     
     Read-Host "`nPress Enter to continue"
+}
+
+# Function to list MSAs (Updated to show assigned computers correctly for gMSAs)
+function List-MSA {
+    Clear-Host
+    Write-Host "=== List Managed Service Accounts ===" -ForegroundColor Cyan
+
+    try {
+        # Get MSAs with important properties
+        $msaAccounts = Get-ADServiceAccount -Filter * -Properties Name, DNSHostName, Enabled, Description,
+                      Created, Modified, ServicePrincipalNames, PrincipalsAllowedToRetrieveManagedPassword, objectClass, msDS-HostServiceAccountBL
+
+        if ($msaAccounts -eq $null -or ($msaAccounts -is [array] -and $msaAccounts.Count -eq 0)) {
+            Write-Host "No Managed Service Accounts found." -ForegroundColor Yellow
+            Read-Host "Press Enter to continue"
+            return
+        }
+
+        # Force into array if single item
+        if (-not ($msaAccounts -is [array])) {
+            $msaAccounts = @($msaAccounts)
+        }
+
+        Write-Host "Found $($msaAccounts.Count) Managed Service Account(s):" -ForegroundColor Yellow
+        Write-Host
+
+        foreach ($msa in $msaAccounts) {
+            # Determine if this is an sMSA or gMSA based on objectClass
+            $msaType = "gMSA (Group Managed Service Account)"
+            if ($msa.objectClass -contains "msDS-ManagedServiceAccount") {
+                $msaType = "sMSA (Standalone Managed Service Account)"
+            }
+
+            # Basic info
+            Write-Host "Name: $($msa.Name)" -ForegroundColor Cyan
+            Write-Host "  Type: $msaType" -ForegroundColor White
+            Write-Host "  Enabled: $($msa.Enabled)" -ForegroundColor White
+            Write-Host "  Description: $($msa.Description)" -ForegroundColor White
+            Write-Host "  Created: $($msa.Created)" -ForegroundColor White
+            Write-Host "  Modified: $($msa.Modified)" -ForegroundColor White
+
+            # If gMSA, show associated AD group(s)
+            if ($msaType -eq "gMSA (Group Managed Service Account)") {
+                if ($msa.PrincipalsAllowedToRetrieveManagedPassword) {
+                    Write-Host "  Associated AD Group(s):" -ForegroundColor Green
+                    foreach ($principalDN in $msa.PrincipalsAllowedToRetrieveManagedPassword) {
+                        try {
+                            $principal = Get-ADObject -Identity $principalDN -Properties Name
+                            Write-Host "    - $($principal.Name)" -ForegroundColor White
+                        } catch {
+                            Write-Host "    - $principalDN (could not resolve)" -ForegroundColor Yellow
+                        }
+                    }
+                } else {
+                    Write-Host "  Associated AD Group(s): None" -ForegroundColor Yellow
+                }
+            }
+
+            # Assigned Computers
+            $assignedComputers = @()
+            if ($msa."msDS-HostServiceAccountBL") {
+                foreach ($computerDN in $msa."msDS-HostServiceAccountBL") {
+                    try {
+                        $computer = Get-ADComputer -Identity $computerDN -Properties Name
+                        $assignedComputers += $computer.Name
+                    } catch {
+                        Write-Host "    - Unable to resolve computer with DN: $computerDN" -ForegroundColor Yellow
+                    }
+                }
+            }
+
+            if ($assignedComputers.Count -gt 0) {
+                Write-Host "  Assigned Computers: $($assignedComputers -join ', ')" -ForegroundColor Green
+            } else {
+                Write-Host "  Assigned Computers: None" -ForegroundColor Yellow
+            }
+
+            Write-Host
+        }
+    }
+    catch {
+        Write-Host "Error retrieving MSAs: $_" -ForegroundColor Red
+    }
+
+    Read-Host "Press Enter to continue"
 }
 
 # Function to modify MSA with improved computer principal view
@@ -553,87 +654,6 @@ function Install-MSA {
     } catch {
         Write-Host "Error during MSA installation: $_" -ForegroundColor Red
     }
-}
-
-# Function to list MSAs - IMPROVED DETAILED VERSION
-function List-MSA {
-    Clear-Host
-    Write-Host "=== List Managed Service Accounts ===" -ForegroundColor Cyan
-
-    try {
-        # Get MSAs with important properties
-        $msaAccounts = Get-ADServiceAccount -Filter * -Properties Name, DNSHostName, Enabled, Description,
-                      Created, Modified, ServicePrincipalNames, PrincipalsAllowedToRetrieveManagedPassword, objectClass
-
-        if ($msaAccounts -eq $null -or ($msaAccounts -is [array] -and $msaAccounts.Count -eq 0)) {
-            Write-Host "No Managed Service Accounts found." -ForegroundColor Yellow
-            Read-Host "Press Enter to continue"
-            return
-        }
-
-        # Force into array if single item
-        if (-not ($msaAccounts -is [array])) {
-            $msaAccounts = @($msaAccounts)
-        }
-
-        Write-Host "Found $($msaAccounts.Count) Managed Service Account(s):" -ForegroundColor Yellow
-        Write-Host
-
-        foreach ($msa in $msaAccounts) {
-            # Determine if this is an sMSA or gMSA based on objectClass
-            $msaType = "gMSA (Group Managed Service Account)"
-            if ($msa.objectClass -contains "msDS-ManagedServiceAccount") {
-                $msaType = "sMSA (Standalone Managed Service Account)"
-            }
-
-            # Basic info
-            Write-Host "Name: $($msa.Name)" -ForegroundColor Cyan
-            Write-Host "  Type: $msaType" -ForegroundColor White
-            Write-Host "  Enabled: $($msa.Enabled)" -ForegroundColor White
-            Write-Host "  Description: $($msa.Description)" -ForegroundColor White
-            Write-Host "  Created: $($msa.Created)" -ForegroundColor White
-            Write-Host "  Modified: $($msa.Modified)" -ForegroundColor White
-
-            # If gMSA, show associated AD group(s)
-            if ($msaType -eq "gMSA (Group Managed Service Account)") {
-                if ($msa.PrincipalsAllowedToRetrieveManagedPassword) {
-                    Write-Host "  Associated AD Group(s):" -ForegroundColor Green
-                    foreach ($principalDN in $msa.PrincipalsAllowedToRetrieveManagedPassword) {
-                        try {
-                            $principal = Get-ADObject -Identity $principalDN -Properties Name
-                            Write-Host "    - $($principal.Name)" -ForegroundColor White
-                        } catch {
-                            Write-Host "    - $principalDN (could not resolve)" -ForegroundColor Yellow
-                        }
-                    }
-                } else {
-                    Write-Host "  Associated AD Group(s): None" -ForegroundColor Yellow
-                }
-            }
-
-            # Assigned Computers
-            $assignedComputers = @()
-            foreach ($computer in Get-ADComputer -Filter * -Properties msDS-HostServiceAccount) {
-                # Ensure the msDS-HostServiceAccount property is treated properly as an array
-                if ($computer."msDS-HostServiceAccount" -contains $msa.DistinguishedName) {
-                    $assignedComputers += $computer.Name
-                }
-            }
-
-            if ($assignedComputers.Count -gt 0) {
-                Write-Host "  Assigned Computers: $($assignedComputers -join ', ')" -ForegroundColor Green
-            } else {
-                Write-Host "  Assigned Computers: None" -ForegroundColor Yellow
-            }
-
-            Write-Host
-        }
-    }
-    catch {
-        Write-Host "Error retrieving MSAs: $_" -ForegroundColor Red
-    }
-
-    Read-Host "Press Enter to continue"
 }
 
 # Main menu function
