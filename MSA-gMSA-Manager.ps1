@@ -247,21 +247,19 @@ function View-MSAPrincipals {
     try {
         # Get the MSA object with all necessary properties
         $msaObject = Get-ADServiceAccount -Identity $MSAName -Properties *
-        
+
         if ($msaObject -eq $null) {
             Write-Host "No Managed Service Account found with the name '$MSAName'." -ForegroundColor Red
             return
         }
-        
+
         # For standalone MSAs (sMSAs)
         if ($msaObject.ObjectClass -contains "msDS-ManagedServiceAccount") {
             Write-Host "`nStandalone Managed Service Account (sMSA) detected." -ForegroundColor Yellow
             
             # Find computers where this sMSA is assigned
-            $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
-                $_."msDS-HostServiceAccount" -contains $msaObject.DistinguishedName
-            }
-            
+            $assignedComputers = Get-ADComputer -Filter {msDS-HostServiceAccount -eq $msaObject.DistinguishedName} -Properties msDS-HostServiceAccount
+
             if ($assignedComputers.Count -gt 0) {
                 Write-Host "`nComputers assigned to this sMSA:" -ForegroundColor Yellow
                 foreach ($computer in $assignedComputers) {
@@ -271,7 +269,7 @@ function View-MSAPrincipals {
                 Write-Host "`nNo computers are currently assigned to this sMSA." -ForegroundColor Yellow
             }
         }
-        
+
         # For group MSAs (gMSAs)
         elseif ($msaObject.ObjectClass -contains "msDS-GroupManagedServiceAccount") {
             Write-Host "`nGroup Managed Service Account (gMSA) detected." -ForegroundColor Yellow
@@ -291,12 +289,11 @@ function View-MSAPrincipals {
                 Write-Host "`nNo associated AD group found for this gMSA." -ForegroundColor Yellow
             }
         }
-        
+
         # Handle unexpected MSA types
         else {
             Write-Host "Unknown MSA type. Please verify the MSA configuration." -ForegroundColor Red
         }
-        
     } catch {
         Write-Host "Error retrieving MSA principals: $_" -ForegroundColor Red
     }
