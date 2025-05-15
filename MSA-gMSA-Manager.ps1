@@ -356,7 +356,7 @@ function List-MSA {
             Write-Host "  Created: $($msa.Created)" -ForegroundColor White
             Write-Host "  Modified: $($msa.Modified)" -ForegroundColor White
 
-            # If gMSA, show associated AD group(s)
+            # If gMSA, show associated AD group(s) and resolve computers in those groups
             if ($msaType -eq "gMSA (Group Managed Service Account)") {
                 if ($msa.PrincipalsAllowedToRetrieveManagedPassword) {
                     Write-Host "  Associated AD Group(s):" -ForegroundColor Green
@@ -364,8 +364,21 @@ function List-MSA {
                         try {
                             $principal = Get-ADObject -Identity $principalDN -Properties Name
                             Write-Host "    - $($principal.Name)" -ForegroundColor White
+
+                            # Resolve members of the group to find computers
+                            if ($principal.ObjectClass -eq "group") {
+                                $groupMembers = Get-ADGroupMember -Identity $principal.Name -Recursive | Where-Object { $_.ObjectClass -eq "computer" }
+                                if ($groupMembers.Count -gt 0) {
+                                    Write-Host "      Computers in group:" -ForegroundColor Green
+                                    foreach ($member in $groupMembers) {
+                                        Write-Host "        - $($member.Name)" -ForegroundColor White
+                                    }
+                                } else {
+                                    Write-Host "      No computers found in this group." -ForegroundColor Yellow
+                                }
+                            }
                         } catch {
-                            Write-Host "    - $principalDN (could not resolve)" -ForegroundColor Yellow
+                            Write-Host "    - Unable to resolve group with DN: $principalDN" -ForegroundColor Yellow
                         }
                     }
                 } else {
