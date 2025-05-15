@@ -15,22 +15,20 @@
 
 # Function to check if the script is running as administrator
 function Check-IsAdministrator {
-    $currentUser = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-    if (-not $currentUser.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        Write-Host "This script must be run as an administrator. Please restart it with elevated privileges." -ForegroundColor Red
+    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $currentPrincipal = New-Object Security.Principal.WindowsPrincipal($currentUser)
+
+    if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        Write-Host "The script must be run as an administrator by the logged-on user." -ForegroundColor Red
+        Write-Host "Please restart the script with elevated privileges."
         Read-Host "Press Enter to exit"
         exit
     }
 }
 
-# Call the function at the start of the script
-Check-IsAdministrator
-
-
 # Function to get the current logged-on user's username
 function Get-CurrentUsername {
     try {
-        # Retrieve the current username using .NET's System.Security.Principal
         $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
         return $currentUser
     } catch {
@@ -38,6 +36,13 @@ function Get-CurrentUsername {
         return "Unknown"
     }
 }
+
+# Main script execution starts here
+# Perform checks for administrator privileges and display the current user
+Check-IsAdministrator
+$currentUsername = Get-CurrentUsername
+Write-Host "Script is running as Administrator." -ForegroundColor Green
+Write-Host "Current logged-on user: $currentUsername" -ForegroundColor Yellow
 # Ensure Active Directory module is available
 function Check-ADModule {
     if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
