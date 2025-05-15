@@ -17,7 +17,7 @@ function Check-ADModule {
         }
     }
     else {
-        Import-Module ActiveDirectory
+        Import-Module ActiveDirectoryview
     }
     return $true
 }
@@ -163,88 +163,60 @@ function View-MSAPrincipals {
     Write-Host "=== Principals for $MSAName ===" -ForegroundColor Cyan
     
     try {
-        # Get principals using our enhanced function
-        $principals = Get-MSAPrincipals -MSAName $MSAName
+        # Get the MSA object with all necessary properties
+        $msaObject = Get-ADServiceAccount -Identity $MSAName -Properties *
         
-        # Filter computers
-        $computers = $principals | Where-Object { $_.Type -eq "computer" }
+        if ($msaObject -eq $null) {
+            Write-Host "No Managed Service Account found with the name '$MSAName'." -ForegroundColor Red
+            return
+        }
         
-        if ($computers.Count -gt 0) {
-            Write-Host "`nComputers with permission to use this MSA:" -ForegroundColor Yellow
-            foreach ($computer in $computers) {
-                Write-Host "  - $($computer.Name)" -ForegroundColor White
+        # For standalone MSAs (sMSAs)
+        if ($msaObject.ObjectClass -contains "msDS-ManagedServiceAccount") {
+            Write-Host "`nStandalone Managed Service Account (sMSA) detected." -ForegroundColor Yellow
+            
+            # Find computers where this sMSA is assigned
+            $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
+                $_."msDS-HostServiceAccount" -contains $msaObject.DistinguishedName
             }
-        } else {
-            Write-Host "`nNo computers have permission to use this MSA." -ForegroundColor Yellow
             
-            # Try an alternative way to check permissions
-            Write-Host "`nAttempting alternative permission check..." -ForegroundColor Yellow
-            
-            $msaObject = Get-ADServiceAccount -Identity $MSAName -Properties *
-            
-            # Display raw permission data to help troubleshoot
-            Write-Host "`nRaw Permission Data:" -ForegroundColor Yellow
-            
-            if ($msaObject.PrincipalsAllowedToRetrieveManagedPassword) {
-                Write-Host "  PrincipalsAllowedToRetrieveManagedPassword:" -ForegroundColor White
-                foreach ($principal in $msaObject.PrincipalsAllowedToRetrieveManagedPassword) {
-                    Write-Host "  - $principal" -ForegroundColor Gray
+            if ($assignedComputers.Count -gt 0) {
+                Write-Host "`nComputers assigned to this sMSA:" -ForegroundColor Yellow
+                foreach ($computer in $assignedComputers) {
+                    Write-Host "  - $($computer.Name)" -ForegroundColor White
                 }
             } else {
-                Write-Host "  PrincipalsAllowedToRetrieveManagedPassword: None" -ForegroundColor Gray
-            }
-            
-            # Check Security Descriptor
-            if ($msaObject.nTSecurityDescriptor) {
-                Write-Host "`n  Security Descriptor Access Rules:" -ForegroundColor White
-                foreach ($ace in $msaObject.nTSecurityDescriptor.Access) {
-                    $identity = $ace.IdentityReference.ToString()
-                    $rights = $ace.ActiveDirectoryRights.ToString()
-                    Write-Host "  - $identity : $rights" -ForegroundColor Gray
-                }
+                Write-Host "`nNo computers are currently assigned to this sMSA." -ForegroundColor Yellow
             }
         }
         
-        # Filter groups
-        $groups = $principals | Where-Object { $_.Type -eq "group" }
-        
-        if ($groups.Count -gt 0) {
-            Write-Host "`nGroups with permission to use this MSA:" -ForegroundColor Yellow
-            foreach ($group in $groups) {
-                Write-Host "  - $($group.Name)" -ForegroundColor White
-                
-                # Get computers in this group
-                try {
-                    $groupMembers = Get-ADGroupMember -Identity $group.DistinguishedName | Where-Object { $_.objectClass -eq "computer" }
-                    if ($groupMembers.Count -gt 0) {
-                        Write-Host "    Computers in this group:" -ForegroundColor Gray
-                        foreach ($member in $groupMembers) {
-                            Write-Host "    - $($member.Name)" -ForegroundColor Gray
-                        }
+        # For group MSAs (gMSAs)
+        elseif ($msaObject.ObjectClass -contains "msDS-GroupManagedServiceAccount") {
+            Write-Host "`nGroup Managed Service Account (gMSA) detected." -ForegroundColor Yellow
+            
+            # Check PrincipalsAllowedToRetrieveManagedPassword property
+            if ($msaObject.PrincipalsAllowedToRetrieveManagedPassword) {
+                Write-Host "`nAssociated AD Group(s):" -ForegroundColor Yellow
+                foreach ($principalDN in $msaObject.PrincipalsAllowedToRetrieveManagedPassword) {
+                    try {
+                        $principal = Get-ADObject -Identity $principalDN -Properties Name
+                        Write-Host "  - $($principal.Name)" -ForegroundColor White
+                    } catch {
+                        Write-Host "  - $principalDN (could not resolve)" -ForegroundColor Red
                     }
                 }
-                catch {
-                    Write-Host "    Error getting group members: $_" -ForegroundColor Red
-                }
+            } else {
+                Write-Host "`nNo associated AD group found for this gMSA." -ForegroundColor Yellow
             }
         }
         
-        # Get other types of principals
-        $others = $principals | Where-Object { $_.Type -ne "computer" -and $_.Type -ne "group" }
-        
-        if ($others.Count -gt 0) {
-            Write-Host "`nOther principals with permission to this MSA:" -ForegroundColor Yellow
-            foreach ($other in $others) {
-                Write-Host "  - $($other.Name) (Type: $($other.Type))" -ForegroundColor White
-            }
+        # Handle unexpected MSA types
+        else {
+            Write-Host "Unknown MSA type. Please verify the MSA configuration." -ForegroundColor Red
         }
         
-        # Show information about how to manually add a computer
-        Write-Host "`nTo manually add a computer to this MSA, use:" -ForegroundColor Cyan
-        Write-Host "Add-ADComputerServiceAccount -Identity <ComputerName> -ServiceAccount $MSAName" -ForegroundColor White
-    }
-    catch {
-        Write-Host "Error getting MSA principals: $_" -ForegroundColor Red
+    } catch {
+        Write-Host "Error retrieving MSA principals: $_" -ForegroundColor Red
     }
     
     Read-Host "`nPress Enter to continue"
