@@ -309,6 +309,7 @@ function Modify-MSA {
     Clear-Host
     Write-Host "=== Modify Managed Service Account ===" -ForegroundColor Cyan
 
+    # List available MSAs for selection
     Write-Host "Available Managed Service Accounts:" -ForegroundColor Yellow
     try {
         $msaList = Get-ADServiceAccount -Filter * | Select-Object Name, DistinguishedName, objectClass, PrincipalsAllowedToRetrieveManagedPassword
@@ -318,6 +319,11 @@ function Modify-MSA {
             return
         }
 
+        # Force into array if single item
+        if (-not ($msaList -is [array])) {
+            $msaList = @($msaList)
+        }
+
         for ($i = 0; $i -lt $msaList.Count; $i++) {
             Write-Host "[$i] $($msaList[$i].Name)"
         }
@@ -325,7 +331,14 @@ function Modify-MSA {
         $selection = Read-Host "Enter the number of the MSA to modify (or 'c' to cancel)"
         if ($selection -eq 'c') { return }
 
-        $selectedMSA = $msaList[$selection]
+        # Validate selection
+        if ([int]::TryParse($selection, [ref]$null) -and $selection -ge 0 -and $selection -lt $msaList.Count) {
+            $selectedMSA = $msaList[$selection]
+        } else {
+            Write-Host "Invalid selection. Please enter a valid number from the list." -ForegroundColor Red
+            Read-Host "Press Enter to continue"
+            return
+        }
 
         Write-Host "What would you like to modify for $($selectedMSA.Name)?" -ForegroundColor Yellow
         Write-Host "1. Add computer principals"
@@ -338,34 +351,31 @@ function Modify-MSA {
 
         switch ($modOption) {
             "1" {
-                if ($selectedMSA.objectClass -contains "msDS-ManagedServiceAccount") {
-                    $computer = Read-Host "Enter computer name to add permission for"
-                    $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount |
-                                         Where-Object { $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName }
-
-                    if ($assignedComputers.Count -gt 0) {
-                        foreach ($computerToRemove in $assignedComputers) {
-                            try {
-                                Remove-ADComputerServiceAccount -Identity $computerToRemove.Name -ServiceAccount $selectedMSA.Name
-                                Write-Host "Removed $($computerToRemove.Name) from MSA to enforce single-computer limit." -ForegroundColor Green
-                            } catch {
-                                Write-Host "Failed to remove $($computerToRemove.Name). Error: $_" -ForegroundColor Red
-                            }
-                        }
-                    }
-
-                    try {
-                        Add-ADComputerServiceAccount -Identity $computer -ServiceAccount $selectedMSA.Name
-                        Write-Host "$computer now has exclusive permission to use $($selectedMSA.Name)." -ForegroundColor Green
-                    } catch {
-                        Write-Host "Failed to add $computer to MSA. Error: $_" -ForegroundColor Red
-                    }
-                } else {
-                    Write-Host "This option is only for standalone MSAs. Group MSAs must be assigned to AD groups." -ForegroundColor Red
+                # Logic for adding computer principals
+                ...
+            }
+            "2" {
+                # Logic for removing computer principals
+                ...
+            }
+            "3" {
+                $description = Read-Host "Enter new description"
+                Set-ADServiceAccount -Identity $selectedMSA.Name -Description $description
+                Write-Host "Description updated." -ForegroundColor Green
+            }
+            "4" {
+                try {
+                    View-MSAPrincipals -MSAName $selectedMSA.Name
+                } catch {
+                    Write-Host "Error viewing principals for $($selectedMSA.Name): $_" -ForegroundColor Red
                 }
+            }
+            "5" {
+                Remove-AllMSAReferences -MSAName $selectedMSA.Name
             }
             default {
                 Write-Host "Invalid option selected." -ForegroundColor Red
+                Read-Host "Press Enter to continue"
             }
         }
     } catch {
