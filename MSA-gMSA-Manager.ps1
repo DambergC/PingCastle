@@ -491,7 +491,7 @@ function Install-MSA {
                             Install-ADServiceAccount -Identity $msaName
                             return "MSA '$msaName' installed successfully."
                         } catch {
-                            return "Error installing MSA: $_"
+                            return "Error installing MSA: $($_.Exception.Message)"
                         }
                     }
                     
@@ -500,8 +500,8 @@ function Install-MSA {
                         Write-Host $result -ForegroundColor Green
                     } catch {
                         Write-Host "Failed to connect to remote computer: $computerName" -ForegroundColor Red
-                        Write-Host "Error: $_" -ForegroundColor Red
-                        Write-Host "Make sure the computer is online and that you have permission to connect to it." -ForegroundColor Yellow
+                        Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+                        Write-Host "Make sure the computer is online, PowerShell remoting is enabled, and you have sufficient permissions." -ForegroundColor Yellow
                     }
                 }
             } else {
