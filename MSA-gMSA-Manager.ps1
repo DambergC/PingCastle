@@ -43,6 +43,8 @@ Check-IsAdministrator
 $currentUsername = Get-CurrentUsername
 Write-Host "Script is running as Administrator." -ForegroundColor Green
 Write-Host "Current logged-on user: $currentUsername" -ForegroundColor Yellow
+
+
 # Ensure Active Directory module is available
 function Check-ADModule {
     if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
