@@ -254,89 +254,101 @@ function View-MSAPrincipals {
 function Modify-MSA {
     Clear-Host
     Write-Host "=== Modify Managed Service Account ===" -ForegroundColor Cyan
-    
+
     # List available MSAs for selection
     Write-Host "Available Managed Service Accounts:" -ForegroundColor Yellow
     try {
-        $msaList = Get-ADServiceAccount -Filter * | Select-Object Name, DistinguishedName, objectClass
+        $msaList = Get-ADServiceAccount -Filter * | Select-Object Name, DistinguishedName, objectClass, PrincipalsAllowedToRetrieveManagedPassword
         if ($msaList -eq $null -or ($msaList -is [array] -and $msaList.Count -eq 0)) {
             Write-Host "No Managed Service Accounts found." -ForegroundColor Yellow
             Read-Host "Press Enter to continue"
             return
         }
-        
+
         # Force into array if single item
         if (-not ($msaList -is [array])) {
             $msaList = @($msaList)
         }
-        
+
         for ($i=0; $i -lt $msaList.Count; $i++) {
             Write-Host "[$i] $($msaList[$i].Name)"
         }
-        
+
         $selection = Read-Host "Enter the number of the MSA to modify (or 'c' to cancel)"
         if ($selection -eq 'c') { return }
-        
-        if ([int]::TryParse($selection, [ref]$null)) {
-            $idx = [int]$selection
-            if ($idx -ge 0 -and $idx -lt $msaList.Count) {
-                $selectedMSA = $msaList[$idx]
-                
-                Write-Host "What would you like to modify for $($selectedMSA.Name)?" -ForegroundColor Yellow
-                Write-Host "1. Add computer principals"
-                Write-Host "2. Remove computer principals"
-                Write-Host "3. Set description"
-                Write-Host "4. View assigned computers/principals"
-                Write-Host "5. Remove all assigned computers"
-                
-                $modOption = Read-Host "Select an option"
-                
-                switch ($modOption) {
-                    "1" {
-                        $computer = Read-Host "Enter computer name to add permission for"
-                        
-                        if ($selectedMSA.objectClass -contains "msDS-ManagedServiceAccount") {
-                            # Remove all previously assigned computers to enforce single-computer rule
-                            $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
-                                $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName
-                            }
-                            foreach ($computer in $assignedComputers) {
-                                Remove-ADComputerServiceAccount -Identity $computer.Name -ServiceAccount $selectedMSA.Name
-                                Write-Host "Removed $($computer.Name) from sMSA to enforce single-computer limit." -ForegroundColor Yellow
-                            }
+
+        $selectedMSA = $msaList[$selection]
+
+        Write-Host "What would you like to modify for $($selectedMSA.Name)?" -ForegroundColor Yellow
+        Write-Host "1. Add computer principals"
+        Write-Host "2. Remove computer principals"
+        Write-Host "3. Set description"
+        Write-Host "4. View assigned computers/principals"
+        Write-Host "5. Remove all assigned computers"
+
+        $modOption = Read-Host "Select an option"
+
+        switch ($modOption) {
+            "1" {
+                if ($selectedMSA.objectClass -contains "msDS-GroupManagedServiceAccount") {
+                    # gMSA: Enforce AD group association
+                    Write-Host "Group MSAs must be assigned to an AD group, not individual computers." -ForegroundColor Red
+
+                    # Check if an AD group is already associated
+                    if (-not $selectedMSA.PrincipalsAllowedToRetrieveManagedPassword) {
+                        Write-Host "No AD group is currently associated with this gMSA." -ForegroundColor Red
+                        $adGroupName = Read-Host "Enter the name of the AD group to associate with this gMSA"
+
+                        try {
+                            Set-ADServiceAccount -Identity $selectedMSA.Name -PrincipalsAllowedToRetrieveManagedPassword $adGroupName
+                            Write-Host "AD group '$adGroupName' successfully associated with gMSA $($selectedMSA.Name)." -ForegroundColor Green
+                        } catch {
+                            Write-Host "Error associating AD group: $_" -ForegroundColor Red
                         }
-                        
-                        Add-ADComputerServiceAccount -Identity $computer -ServiceAccount $selectedMSA.Name
-                        Write-Host "$computer now has exclusive permission to use $($selectedMSA.Name)" -ForegroundColor Green
+                    } else {
+                        $adGroupDN = $selectedMSA.PrincipalsAllowedToRetrieveManagedPassword[0]
+                        Write-Host "This gMSA is already associated with AD group: $($adGroupDN)" -ForegroundColor Green
                     }
-                    "2" {
-                        # Existing logic for removing computer principals
+                } elseif ($selectedMSA.objectClass -contains "msDS-ManagedServiceAccount") {
+                    # sMSA: Ensure only one machine is assigned
+                    $computer = Read-Host "Enter computer name to add permission for"
+                    $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
+                        $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName
                     }
-                    "3" {
-                        $description = Read-Host "Enter new description"
-                        Set-ADServiceAccount -Identity $selectedMSA.Name -Description $description
-                        Write-Host "Description updated." -ForegroundColor Green
+
+                    if ($assignedComputers.Count -gt 0) {
+                        foreach ($computerToRemove in $assignedComputers) {
+                            Remove-ADComputerServiceAccount -Identity $computerToRemove.Name -ServiceAccount $selectedMSA.Name
+                            Write-Host "Removed $($computerToRemove.Name) from sMSA to enforce single-computer limit." -ForegroundColor Yellow
+                        }
                     }
-                    "4" {
-                        View-MSAPrincipals -MSAName $selectedMSA.Name
-                    }
-                    "5" {
-                        # Existing logic for removing all assigned computers
-                    }
-                    default {
-                        Write-Host "Invalid option selected." -ForegroundColor Red
-                    }
+
+                    Add-ADComputerServiceAccount -Identity $computer -ServiceAccount $selectedMSA.Name
+                    Write-Host "$computer now has exclusive permission to use $($selectedMSA.Name)" -ForegroundColor Green
                 }
-            } else {
-                Write-Host "Invalid selection number." -ForegroundColor Red
             }
-        } else {
-            Write-Host "Invalid input." -ForegroundColor Red
+            "2" {
+                # Existing logic for removing computer principals
+            }
+            "3" {
+                $description = Read-Host "Enter new description"
+                Set-ADServiceAccount -Identity $selectedMSA.Name -Description $description
+                Write-Host "Description updated." -ForegroundColor Green
+            }
+            "4" {
+                View-MSAPrincipals -MSAName $selectedMSA.Name
+            }
+            "5" {
+                # Existing logic for removing all assigned computers
+            }
+            default {
+                Write-Host "Invalid option selected." -ForegroundColor Red
+            }
         }
     } catch {
         Write-Host "Error modifying MSA: $_" -ForegroundColor Red
     }
-    
+
     Read-Host "Press Enter to continue"
 }
 
@@ -397,52 +409,67 @@ function Delete-MSA {
 function Install-MSA {
     Clear-Host
     Write-Host "=== Install Managed Service Account on Computer ===" -ForegroundColor Cyan
-    
+
     Write-Host "Available Managed Service Accounts:" -ForegroundColor Yellow
     try {
-        $msaList = Get-ADServiceAccount -Filter * | Select-Object Name, DistinguishedName, objectClass
+        $msaList = Get-ADServiceAccount -Filter * | Select-Object Name, DistinguishedName, objectClass, PrincipalsAllowedToRetrieveManagedPassword
         if (-not $msaList) {
             Write-Host "No Managed Service Accounts found." -ForegroundColor Yellow
             return
         }
-        
+
         for ($i = 0; $i -lt $msaList.Count; $i++) {
             Write-Host "[$i] $($msaList[$i].Name)"
         }
-        
+
         $selection = Read-Host "Enter the number of the MSA to install (or 'c' to cancel)"
         if ($selection -eq 'c') { return }
-        
+
         $selectedMSA = $msaList[$selection]
         $computerName = Read-Host "Enter the computer name where you want to install the MSA"
-        
-        # Check if MSA is already installed elsewhere
-        $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount |
-                             Where-Object { $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName }
-                             
-        if ($assignedComputers.Count -gt 0) {
-            if ($selectedMSA.objectClass -contains "msDS-ManagedServiceAccount") {
-                Write-Host "This standalone MSA is already assigned to: $($assignedComputers.Name -join ', ')" -ForegroundColor Red
-                Write-Host "Installation halted to ensure only one computer can use this sMSA at a time." -ForegroundColor Red
+
+        if ($selectedMSA.objectClass -contains "msDS-GroupManagedServiceAccount") {
+            # gMSA: Enforce AD group association
+            if (-not $selectedMSA.PrincipalsAllowedToRetrieveManagedPassword) {
+                Write-Host "This gMSA does not have an associated AD group." -ForegroundColor Red
+                Write-Host "Please associate an AD group before installation." -ForegroundColor Red
                 return
             }
-        }
-        
-        # Local or remote installation
-        if ($computerName -eq $env:COMPUTERNAME) {
-            Install-ADServiceAccount -Identity $selectedMSA.Name
-            Write-Host "MSA '$($selectedMSA.Name)' installed successfully on local computer." -ForegroundColor Green
-        } else {
-            Write-Host "Installing MSA '$($selectedMSA.Name)' on remote computer '$computerName'..." -ForegroundColor Yellow
-            
-            $scriptBlock = {
-                param($msaName)
-                Import-Module ActiveDirectory
-                Install-ADServiceAccount -Identity $msaName
+
+            # Validate the AD group has computer members
+            $adGroupDN = $selectedMSA.PrincipalsAllowedToRetrieveManagedPassword[0]
+            $groupMembers = Get-ADGroupMember -Identity $adGroupDN | Where-Object { $_.ObjectClass -eq "computer" }
+
+            if ($groupMembers.Count -eq 0) {
+                Write-Host "The associated AD group does not have any computer members." -ForegroundColor Red
+                Write-Host "Please add computers to the AD group before installation." -ForegroundColor Red
+                return
             }
-            
-            Invoke-Command -ComputerName $computerName -ScriptBlock $scriptBlock -ArgumentList $selectedMSA.Name
-            Write-Host "MSA '$($selectedMSA.Name)' installed successfully on remote computer." -ForegroundColor Green
+
+            Write-Host "The gMSA is successfully associated with AD group: $($adGroupDN)" -ForegroundColor Green
+            Write-Host "Computers in the AD group will now have access to the gMSA." -ForegroundColor Green
+            return
+        }
+
+        if ($selectedMSA.objectClass -contains "msDS-ManagedServiceAccount") {
+            # sMSA: Ensure only one machine is assigned
+            $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount |
+                                 Where-Object { $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName }
+
+            if ($assignedComputers.Count -gt 0) {
+                Write-Host "This standalone MSA is already assigned to: $($assignedComputers.Name -join ', ')" -ForegroundColor Red
+                Write-Host "Reassigning the sMSA to the new computer and removing previous assignments..." -ForegroundColor Yellow
+
+                # Remove all existing assignments
+                foreach ($computerToRemove in $assignedComputers) {
+                    Remove-ADComputerServiceAccount -Identity $computerToRemove.Name -ServiceAccount $selectedMSA.Name
+                    Write-Host "Removed $($computerToRemove.Name) from sMSA." -ForegroundColor Yellow
+                }
+            }
+
+            # Assign the new computer
+            Add-ADComputerServiceAccount -Identity $computerName -ServiceAccount $selectedMSA.Name
+            Write-Host "MSA '$($selectedMSA.Name)' assigned to computer '$computerName' successfully." -ForegroundColor Green
         }
     } catch {
         Write-Host "Error installing MSA: $_" -ForegroundColor Red
