@@ -30,7 +30,7 @@ function Remove-AllMSAReferences {
     
     $msaDistinguishedName = (Get-ADServiceAccount -Identity $MSAName).DistinguishedName
     $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount |
-                         Where-Object { $_.msDS-HostServiceAccount -contains $msaDistinguishedName }
+                         Where-Object { $_."msDS-HostServiceAccount" -contains $msaDistinguishedName }
                          
     foreach ($computer in $assignedComputers) {
         Write-Host "Removing MSA from computer: $($computer.Name)" -ForegroundColor Yellow
@@ -451,7 +451,7 @@ function Install-MSA {
         
         # Check if MSA is already installed elsewhere
         $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount |
-                             Where-Object { $_.msDS-HostServiceAccount -contains $selectedMSA.DistinguishedName }
+                             Where-Object { $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName }
                              
         if ($assignedComputers.Count -gt 0) {
             Write-Host "This MSA is already installed on: $($assignedComputers.Name -join ', ')" -ForegroundColor Red
