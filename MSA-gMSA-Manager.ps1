@@ -519,14 +519,31 @@ function List-MSA {
             Write-Host "  Created: $($msa.Created)" -ForegroundColor White
             Write-Host "  Modified: $($msa.Modified)" -ForegroundColor White
 
+            # If gMSA, show associated AD group(s)
+            if ($msaType -eq "gMSA (Group Managed Service Account)") {
+                if ($msa.PrincipalsAllowedToRetrieveManagedPassword) {
+                    Write-Host "  Associated AD Group(s):" -ForegroundColor Green
+                    foreach ($principalDN in $msa.PrincipalsAllowedToRetrieveManagedPassword) {
+                        try {
+                            $principal = Get-ADObject -Identity $principalDN -Properties Name
+                            Write-Host "    - $($principal.Name)" -ForegroundColor White
+                        } catch {
+                            Write-Host "    - $principalDN (could not resolve)" -ForegroundColor Yellow
+                        }
+                    }
+                } else {
+                    Write-Host "  Associated AD Group(s): None" -ForegroundColor Yellow
+                }
+            }
+
             # Assigned Computers
-$assignedComputers = @()
-foreach ($computer in Get-ADComputer -Filter * -Properties msDS-HostServiceAccount) {
-    # Ensure the msDS-HostServiceAccount property is treated properly as an array
-    if ($computer."msDS-HostServiceAccount" -contains $msa.DistinguishedName) {
-        $assignedComputers += $computer.Name
-    }
-}
+            $assignedComputers = @()
+            foreach ($computer in Get-ADComputer -Filter * -Properties msDS-HostServiceAccount) {
+                # Ensure the msDS-HostServiceAccount property is treated properly as an array
+                if ($computer."msDS-HostServiceAccount" -contains $msa.DistinguishedName) {
+                    $assignedComputers += $computer.Name
+                }
+            }
 
             if ($assignedComputers.Count -gt 0) {
                 Write-Host "  Assigned Computers: $($assignedComputers -join ', ')" -ForegroundColor Green
@@ -542,20 +559,6 @@ foreach ($computer in Get-ADComputer -Filter * -Properties msDS-HostServiceAccou
     }
 
     Read-Host "Press Enter to continue"
-}
-
-# Function to get current username from whoami
-function Get-CurrentUsername {
-    try {
-        $whoami = whoami
-        # Extract just the username part, removing domain if present
-        $username = ($whoami -split '\\')[-1]
-        return $username
-    }
-    catch {
-        # Fallback to environment variable if whoami fails
-        return $env:USERNAME
-    }
 }
 
 # Main menu function
