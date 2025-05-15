@@ -12,7 +12,17 @@
 #   - Initial release with functions for creating, modifying, deleting, 
 #     and managing MSAs and gMSAs.
 # ================================================
-
+# Function to get the current logged-on user's username
+function Get-CurrentUsername {
+    try {
+        # Retrieve the current username using .NET's System.Security.Principal
+        $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        return $currentUser
+    } catch {
+        Write-Host "Error fetching logged-on user: $_" -ForegroundColor Red
+        return "Unknown"
+    }
+}
 # Ensure Active Directory module is available
 function Check-ADModule {
     if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
