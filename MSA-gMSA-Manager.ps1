@@ -50,43 +50,33 @@ function Create-MSA {
             Write-Host "Computer '$computerName' allowed to use MSA '$msaName'." -ForegroundColor Green
         } 
         else {
-            # Create group MSA (gMSA) with absolute minimum parameters
-            Write-Host "Creating group MSA (gMSA)..." -ForegroundColor Yellow
-            
-            # Check for KDS Root Key
-            $kdsRootKeys = Get-KdsRootKey
-            if ($null -eq $kdsRootKeys) {
-                Write-Host "No KDS Root Key found. Creating one..." -ForegroundColor Yellow
-                Add-KdsRootKey -EffectiveTime ((Get-Date).AddHours(-10))
-                Write-Host "KDS Root Key created. Waiting for replication..." -ForegroundColor Yellow
-                Start-Sleep -Seconds 5  # Brief pause
-            }
-            
-            # Try the most basic command possible
-            New-ADServiceAccount -Name $msaName
-            
-            Write-Host "Group MSA '$msaName' created successfully." -ForegroundColor Green
-            
-            # Ask if want to add computers to this gMSA now
-            $addPrincipals = Read-Host "Do you want to add computers to this gMSA now? (y/n)"
-            
-            if ($addPrincipals -eq 'y') {
-                $continue = $true
-                while ($continue) {
-                    $computerName = Read-Host "Enter computer name to add (or press Enter to finish)"
-                    
-                    if ([string]::IsNullOrEmpty($computerName)) {
-                        $continue = $false
-                    } else {
-                        try {
-                            Add-ADComputerServiceAccount -Identity $computerName -ServiceAccount $msaName
-                            Write-Host "Computer '$computerName' added successfully to gMSA '$msaName'." -ForegroundColor Green
-                        }
-                        catch {
-                            Write-Host "Error adding computer: $_" -ForegroundColor Red
-                        }
-                    }
+            # Check if AD group is created
+            $isAdGroupCreated = Read-Host "Is the AD group created? (yes/no)"
+            if ($isAdGroupCreated -eq "yes") {
+                $adGroupName = Read-Host "Please provide the AD group name"
+                Write-Host "Creating group MSA (gMSA) associated with AD group '$adGroupName'..." -ForegroundColor Yellow
+                
+                # Check for KDS Root Key
+                $kdsRootKeys = Get-KdsRootKey
+                if ($null -eq $kdsRootKeys) {
+                    Write-Host "No KDS Root Key found. Creating one..." -ForegroundColor Yellow
+                    Add-KdsRootKey -EffectiveTime ((Get-Date).AddHours(-10))
+                    Write-Host "KDS Root Key created. Waiting for replication..." -ForegroundColor Yellow
+                    Start-Sleep -Seconds 5  # Brief pause
                 }
+                
+                # Create the group MSA
+                New-ADServiceAccount -Name $msaName -PrincipalsAllowedToRetrieveManagedPassword $adGroupName
+                
+                Write-Host "Group MSA '$msaName' created successfully." -ForegroundColor Green
+            }
+            elseif ($isAdGroupCreated -eq "no") {
+                Write-Host "AD group is not created. Stopping gMSA creation." -ForegroundColor Red
+                return
+            }
+            else {
+                Write-Host "Invalid input. Please respond with 'yes' or 'no'." -ForegroundColor Red
+                return
             }
         }
     }
