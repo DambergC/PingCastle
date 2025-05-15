@@ -1,5 +1,17 @@
-# MSA Manager - PowerShell Script for Managing Managed Service Accounts
-# Created: 2025-05-14
+# ================================================
+# Script Name: MSA-gMSA-Manager.ps1
+# Description: PowerShell script for managing Managed Service Accounts (MSA) 
+#              and Group Managed Service Accounts (gMSA).
+# Version: 1.0.0
+# Last Updated: 2025-05-15
+# Author: DambergC (Christian Damberg)
+# GitHub Repository: https://github.com/DambergC/PingCastle
+# 
+# Changelog:
+# Version 1.0.0 - 2025-05-15
+#   - Initial release with functions for creating, modifying, deleting, 
+#     and managing MSAs and gMSAs.
+# ================================================
 
 # Ensure Active Directory module is available
 function Check-ADModule {
