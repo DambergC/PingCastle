@@ -28,17 +28,55 @@ function Remove-AllMSAReferences {
         [string]$MSAName
     )
     
-    $msaDistinguishedName = (Get-ADServiceAccount -Identity $MSAName).DistinguishedName
-    $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount |
-                         Where-Object { $_."msDS-HostServiceAccount" -contains $msaDistinguishedName }
-                         
-    foreach ($computer in $assignedComputers) {
-        Write-Host "Removing MSA from computer: $($computer.Name)" -ForegroundColor Yellow
-        Remove-ADComputerServiceAccount -Identity $computer.Name -ServiceAccount $MSAName
-        Write-Host "Removed MSA from computer: $($computer.Name)" -ForegroundColor Green
+    try {
+        $msaDistinguishedName = (Get-ADServiceAccount -Identity $MSAName).DistinguishedName
+        $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount |
+                             Where-Object { $_."msDS-HostServiceAccount" -contains $msaDistinguishedName }
+
+        if ($assignedComputers.Count -eq 0) {
+            Write-Host "No computers are currently assigned to the MSA '$MSAName'." -ForegroundColor Yellow
+            return
+        }
+
+        foreach ($computer in $assignedComputers) {
+            try {
+                Remove-ADComputerServiceAccount -Identity $computer.Name -ServiceAccount $MSAName
+                Write-Host "Successfully removed MSA from computer: $($computer.Name)" -ForegroundColor Green
+            } catch {
+                Write-Host "Failed to remove MSA from computer: $($computer.Name)" -ForegroundColor Red
+                Write-Host "Error: $_" -ForegroundColor Red
+            }
+        }
+
+        Write-Host "All references to the MSA '$MSAName' have been removed." -ForegroundColor Green
+    } catch {
+        Write-Host "Error removing MSA references: $_" -ForegroundColor Red
     }
+}
+
+function Remove-MSAGroupPrincipal {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$MSAName,
+        [Parameter(Mandatory=$true)]
+        [string]$GroupName
+    )
     
-    Write-Host "All references to the MSA have been removed." -ForegroundColor Green
+    try {
+        $msaObject = Get-ADServiceAccount -Identity $MSAName -Properties PrincipalsAllowedToRetrieveManagedPassword
+        if (-not $msaObject.PrincipalsAllowedToRetrieveManagedPassword) {
+            Write-Host "No principals are currently assigned to the MSA '$MSAName'." -ForegroundColor Yellow
+            return
+        }
+
+        # Remove the specified group from the PrincipalsAllowedToRetrieveManagedPassword
+        $updatedPrincipals = $msaObject.PrincipalsAllowedToRetrieveManagedPassword | Where-Object { $_ -ne (Get-ADGroup -Identity $GroupName).DistinguishedName }
+        Set-ADServiceAccount -Identity $MSAName -PrincipalsAllowedToRetrieveManagedPassword $updatedPrincipals
+
+        Write-Host "Successfully removed the group '$GroupName' from the MSA '$MSAName'." -ForegroundColor Green
+    } catch {
+        Write-Host "Error removing principal: $_" -ForegroundColor Red
+    }
 }
 
 # Function to create a new MSA - ULTRA MINIMAL VERSION
