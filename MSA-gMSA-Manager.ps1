@@ -22,6 +22,25 @@ function Check-ADModule {
     return $true
 }
 
+function Remove-AllMSAReferences {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$MSAName
+    )
+    
+    $msaDistinguishedName = (Get-ADServiceAccount -Identity $MSAName).DistinguishedName
+    $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount |
+                         Where-Object { $_.msDS-HostServiceAccount -contains $msaDistinguishedName }
+                         
+    foreach ($computer in $assignedComputers) {
+        Write-Host "Removing MSA from computer: $($computer.Name)" -ForegroundColor Yellow
+        Remove-ADComputerServiceAccount -Identity $computer.Name -ServiceAccount $MSAName
+        Write-Host "Removed MSA from computer: $($computer.Name)" -ForegroundColor Green
+    }
+    
+    Write-Host "All references to the MSA have been removed." -ForegroundColor Green
+}
+
 # Function to create a new MSA - ULTRA MINIMAL VERSION
 function Create-MSA {
     Clear-Host
@@ -34,22 +53,11 @@ function Create-MSA {
     
     try {
         if ($msaType -eq '1') {
-            # Create standalone MSA (sMSA) with absolute minimum parameters
+            # Create standalone MSA (sMSA)
             Write-Host "Creating standalone MSA (sMSA)..." -ForegroundColor Yellow
-            
-            # Try the most basic command possible
             New-ADServiceAccount -Name $msaName -RestrictToSingleComputer
-            
             Write-Host "Standalone MSA '$msaName' created successfully." -ForegroundColor Green
-            
-            # Ask for the computer to bind this MSA to
-            $computerName = Read-Host "Enter the computer name to bind this sMSA to"
-            
-            # Add the computer to the allowed principals for this MSA
-            Add-ADComputerServiceAccount -Identity $computerName -ServiceAccount $msaName
-            Write-Host "Computer '$computerName' allowed to use MSA '$msaName'." -ForegroundColor Green
-        } 
-        else {
+        } else {
             # Check if AD group is created
             $isAdGroupCreated = Read-Host "Is the AD group created? (yes/no)"
             if ($isAdGroupCreated -eq "yes") {
@@ -62,48 +70,22 @@ function Create-MSA {
                     Write-Host "No KDS Root Key found. Creating one..." -ForegroundColor Yellow
                     Add-KdsRootKey -EffectiveTime ((Get-Date).AddHours(-10))
                     Write-Host "KDS Root Key created. Waiting for replication..." -ForegroundColor Yellow
-                    Start-Sleep -Seconds 5  # Brief pause
+                    Start-Sleep -Seconds 5
                 }
                 
-                # Create the group MSA
+                # Create group MSA
                 New-ADServiceAccount -Name $msaName -PrincipalsAllowedToRetrieveManagedPassword $adGroupName
-                
                 Write-Host "Group MSA '$msaName' created successfully." -ForegroundColor Green
-            }
-            elseif ($isAdGroupCreated -eq "no") {
+            } elseif ($isAdGroupCreated -eq "no") {
                 Write-Host "AD group is not created. Stopping gMSA creation." -ForegroundColor Red
                 return
-            }
-            else {
+            } else {
                 Write-Host "Invalid input. Please respond with 'yes' or 'no'." -ForegroundColor Red
                 return
             }
         }
-    }
-    catch {
+    } catch {
         Write-Host "Error creating MSA: $_" -ForegroundColor Red
-        
-        $errorMsg = $_.Exception.Message
-        
-        # Provide specific guidance based on the error message
-        if ($errorMsg -like "*Parameter set cannot be resolved*") {
-            Write-Host "`nYour Active Directory version might require different parameter combinations." -ForegroundColor Yellow
-            Write-Host "Please try one of these commands manually in a PowerShell window:" -ForegroundColor Yellow
-            
-            if ($msaType -eq '1') {
-                Write-Host "`nFor standalone MSA (sMSA):" -ForegroundColor Cyan
-                Write-Host "New-ADServiceAccount -Name $msaName -RestrictToSingleComputer" -ForegroundColor White
-                Write-Host "-- OR --" -ForegroundColor Cyan
-                Write-Host "New-ADServiceAccount -Name $msaName -SAMAccountName $msaName`$ -RestrictToSingleComputer" -ForegroundColor White
-            } else {
-                Write-Host "`nFor group MSA (gMSA):" -ForegroundColor Cyan
-                Write-Host "New-ADServiceAccount -Name $msaName" -ForegroundColor White
-                Write-Host "-- OR --" -ForegroundColor Cyan
-                Write-Host "New-ADServiceAccount -Name $msaName -SAMAccountName $msaName`$" -ForegroundColor White
-                Write-Host "-- OR --" -ForegroundColor Cyan
-                Write-Host "New-ADServiceAccount -Name $msaName -DNSHostName $msaName.$((Get-ADDomain).DNSRoot)" -ForegroundColor White
-            }
-        }
     }
     
     Read-Host "Press Enter to continue"
@@ -305,6 +287,7 @@ function Modify-MSA {
                 Write-Host "2. Remove computer principals"
                 Write-Host "3. Set description"
                 Write-Host "4. View assigned computers/principals"
+                Write-Host "5. Remove all assigned computers"
                 
                 $modOption = Read-Host "Select an option"
                 
@@ -315,7 +298,7 @@ function Modify-MSA {
                         Write-Host "$computer now has permission to use $($selectedMSA.Name)" -ForegroundColor Green
                     }
                     "2" {
-                        # Find computers with permissions to this MSA using our improved function
+                        # Find computers with permissions to this MSA
                         $principals = Get-MSAPrincipals -MSAName $selectedMSA.Name
                         $computers = $principals | Where-Object { $_.Type -eq "computer" } | Select-Object -ExpandProperty Name
                         
@@ -352,6 +335,25 @@ function Modify-MSA {
                     "4" {
                         # Show detailed view of principals/computers
                         View-MSAPrincipals -MSAName $selectedMSA.Name
+                    }
+                    "5" {
+                        # Remove all assigned computers
+                        Write-Host "Removing all assigned computers from MSA '$($selectedMSA.Name)'..." -ForegroundColor Yellow
+                        $msaDistinguishedName = $selectedMSA.DistinguishedName
+                        $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
+                            $_."msDS-HostServiceAccount" -contains $msaDistinguishedName
+                        }
+                        
+                        if ($assignedComputers.Count -eq 0) {
+                            Write-Host "No computers are currently assigned to this MSA." -ForegroundColor Yellow
+                        } else {
+                            foreach ($computer in $assignedComputers) {
+                                Remove-ADComputerServiceAccount -Identity $computer.Name -ServiceAccount $selectedMSA.Name
+                                Write-Host "Removed MSA from computer: $($computer.Name)" -ForegroundColor Green
+                            }
+                        }
+                        
+                        Write-Host "All assigned computers have been removed from MSA '$($selectedMSA.Name)'." -ForegroundColor Green
                     }
                     default {
                         Write-Host "Invalid option selected." -ForegroundColor Red
@@ -425,97 +427,57 @@ function Delete-MSA {
     Read-Host "Press Enter to continue"
 }
 
-# Function to install MSA on a computer
 function Install-MSA {
     Clear-Host
     Write-Host "=== Install Managed Service Account on Computer ===" -ForegroundColor Cyan
     
-    # List available MSAs for selection
     Write-Host "Available Managed Service Accounts:" -ForegroundColor Yellow
     try {
         $msaList = Get-ADServiceAccount -Filter * | Select-Object Name, DistinguishedName
-        if ($msaList -eq $null -or ($msaList -is [array] -and $msaList.Count -eq 0)) {
+        if (-not $msaList) {
             Write-Host "No Managed Service Accounts found." -ForegroundColor Yellow
-            Read-Host "Press Enter to continue"
             return
         }
         
-        # Force into array if single item
-        if (-not ($msaList -is [array])) {
-            $msaList = @($msaList)
-        }
-        
-        for ($i=0; $i -lt $msaList.Count; $i++) {
+        for ($i = 0; $i -lt $msaList.Count; $i++) {
             Write-Host "[$i] $($msaList[$i].Name)"
         }
         
         $selection = Read-Host "Enter the number of the MSA to install (or 'c' to cancel)"
         if ($selection -eq 'c') { return }
         
-        if ([int]::TryParse($selection, [ref]$null)) {
-            $idx = [int]$selection
-            if ($idx -ge 0 -and $idx -lt $msaList.Count) {
-                $selectedMSA = $msaList[$idx]
-                
-                $computerName = Read-Host "Enter the computer name where you want to install the MSA"
-                
-                # Check if the MSA is already installed elsewhere
-                $assignedComputers = @()
-                foreach ($computer in Get-ADComputer -Filter * -Properties msDS-HostServiceAccount) {
-                    if ($computer."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName) {
-                        $assignedComputers += $computer.Name
-                    }
-                }
-                
-                if ($assignedComputers.Count -gt 0) {
-                    Write-Host "This MSA is already installed on the following computer(s): $($assignedComputers -join ', ')" -ForegroundColor Red
-                    Write-Host "Installation halted to prevent conflicts." -ForegroundColor Red
-                    return
-                }
-                
-                # Check if remote or local
-                $isLocal = ($computerName -eq $env:COMPUTERNAME) -or ($computerName -eq "localhost")
-                
-                if ($isLocal) {
-                    # Install locally
-                    Install-ADServiceAccount -Identity $selectedMSA.Name
-                    Write-Host "MSA '$($selectedMSA.Name)' installed successfully on local computer." -ForegroundColor Green
-                } else {
-                    # Install remotely using Invoke-Command
-                    Write-Host "Installing MSA '$($selectedMSA.Name)' on remote computer '$computerName'..." -ForegroundColor Yellow
-                    
-                    $scriptBlock = {
-                        param($msaName)
-                        try {
-                            Import-Module ActiveDirectory
-                            Install-ADServiceAccount -Identity $msaName
-                            return "MSA '$msaName' installed successfully."
-                        } catch {
-                            return "Error installing MSA: $($_.Exception.Message)"
-                        }
-                    }
-                    
-                    try {
-                        $result = Invoke-Command -ComputerName $computerName -ScriptBlock $scriptBlock -ArgumentList $selectedMSA.Name -ErrorAction Stop
-                        Write-Host $result -ForegroundColor Green
-                    } catch {
-                        Write-Host "Failed to connect to remote computer: $computerName" -ForegroundColor Red
-                        Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
-                        Write-Host "Make sure the computer is online, PowerShell remoting is enabled, and you have sufficient permissions." -ForegroundColor Yellow
-                    }
-                }
-            } else {
-                Write-Host "Invalid selection number." -ForegroundColor Red
-            }
-        } else {
-            Write-Host "Invalid input." -ForegroundColor Red
+        $selectedMSA = $msaList[$selection]
+        $computerName = Read-Host "Enter the computer name where you want to install the MSA"
+        
+        # Check if MSA is already installed elsewhere
+        $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount |
+                             Where-Object { $_.msDS-HostServiceAccount -contains $selectedMSA.DistinguishedName }
+                             
+        if ($assignedComputers.Count -gt 0) {
+            Write-Host "This MSA is already installed on: $($assignedComputers.Name -join ', ')" -ForegroundColor Red
+            Write-Host "Installation halted to prevent conflicts." -ForegroundColor Red
+            return
         }
-    }
-    catch {
+        
+        # Local or remote installation
+        if ($computerName -eq $env:COMPUTERNAME) {
+            Install-ADServiceAccount -Identity $selectedMSA.Name
+            Write-Host "MSA '$($selectedMSA.Name)' installed successfully on local computer." -ForegroundColor Green
+        } else {
+            Write-Host "Installing MSA '$($selectedMSA.Name)' on remote computer '$computerName'..." -ForegroundColor Yellow
+            
+            $scriptBlock = {
+                param($msaName)
+                Import-Module ActiveDirectory
+                Install-ADServiceAccount -Identity $msaName
+            }
+            
+            Invoke-Command -ComputerName $computerName -ScriptBlock $scriptBlock -ArgumentList $selectedMSA.Name
+            Write-Host "MSA '$($selectedMSA.Name)' installed successfully on remote computer." -ForegroundColor Green
+        }
+    } catch {
         Write-Host "Error installing MSA: $_" -ForegroundColor Red
     }
-    
-    Read-Host "Press Enter to continue"
 }
 
 # Function to list MSAs - IMPROVED DETAILED VERSION
