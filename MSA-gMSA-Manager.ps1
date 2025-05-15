@@ -309,7 +309,6 @@ function Modify-MSA {
     Clear-Host
     Write-Host "=== Modify Managed Service Account ===" -ForegroundColor Cyan
 
-    # List available MSAs for selection
     Write-Host "Available Managed Service Accounts:" -ForegroundColor Yellow
     try {
         $msaList = Get-ADServiceAccount -Filter * | Select-Object Name, DistinguishedName, objectClass, PrincipalsAllowedToRetrieveManagedPassword
@@ -319,12 +318,7 @@ function Modify-MSA {
             return
         }
 
-        # Force into array if single item
-        if (-not ($msaList -is [array])) {
-            $msaList = @($msaList)
-        }
-
-        for ($i=0; $i -lt $msaList.Count; $i++) {
+        for ($i = 0; $i -lt $msaList.Count; $i++) {
             Write-Host "[$i] $($msaList[$i].Name)"
         }
 
@@ -344,88 +338,31 @@ function Modify-MSA {
 
         switch ($modOption) {
             "1" {
-                if ($selectedMSA.objectClass -contains "msDS-GroupManagedServiceAccount") {
-                    # gMSA: Enforce AD group association
-                    Write-Host "Group MSAs must be assigned to an AD group, not individual computers." -ForegroundColor Red
-
-                    # Check if an AD group is already associated
-                    if (-not $selectedMSA.PrincipalsAllowedToRetrieveManagedPassword) {
-                        Write-Host "No AD group is currently associated with this gMSA." -ForegroundColor Red
-                        $adGroupName = Read-Host "Enter the name of the AD group to associate with this gMSA"
-
-                        try {
-                            Set-ADServiceAccount -Identity $selectedMSA.Name -PrincipalsAllowedToRetrieveManagedPassword $adGroupName
-                            Write-Host "AD group '$adGroupName' successfully associated with gMSA $($selectedMSA.Name)." -ForegroundColor Green
-                        } catch {
-                            Write-Host "Error associating AD group: $_" -ForegroundColor Red
-                        }
-                    } else {
-                        $adGroupDN = $selectedMSA.PrincipalsAllowedToRetrieveManagedPassword[0]
-                        Write-Host "This gMSA is already associated with AD group: $($adGroupDN)" -ForegroundColor Green
-                    }
-                } elseif ($selectedMSA.objectClass -contains "msDS-ManagedServiceAccount") {
-                    # sMSA: Ensure only one machine is assigned
+                if ($selectedMSA.objectClass -contains "msDS-ManagedServiceAccount") {
                     $computer = Read-Host "Enter computer name to add permission for"
-                    $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
-                        $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName
-                    }
+                    $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount |
+                                         Where-Object { $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName }
 
                     if ($assignedComputers.Count -gt 0) {
                         foreach ($computerToRemove in $assignedComputers) {
-                            Remove-ADComputerServiceAccount -Identity $computerToRemove.Name -ServiceAccount $selectedMSA.Name
-                            Write-Host "Removed $($computerToRemove.Name) from sMSA to enforce single-computer limit." -ForegroundColor Yellow
-                        }
-                    }
-
-                    Add-ADComputerServiceAccount -Identity $computer -ServiceAccount $selectedMSA.Name
-                    Write-Host "$computer now has exclusive permission to use $($selectedMSA.Name)" -ForegroundColor Green
-                }
-            }
-            "2" {
-                # Logic for removing computer principals
-                $principals = Get-MSAPrincipals -MSAName $selectedMSA.Name
-                $computers = $principals | Where-Object { $_.Type -eq "Computer" } | Select-Object -ExpandProperty Name
-
-                if ($computers.Count -eq 0) {
-                    Write-Host "No computers have permission to use this MSA." -ForegroundColor Yellow
-                } else {
-                    Write-Host "Computers with permission to use this MSA:" -ForegroundColor Yellow
-                    for ($i=0; $i -lt $computers.Count; $i++) {
-                        Write-Host "[$i] $($computers[$i])"
-                    }
-
-                    $computerIndex = Read-Host "Enter the number of the computer to remove (or 'c' to cancel)"
-                    if ($computerIndex -eq 'c') { break }
-
-                    if ([int]::TryParse($computerIndex, [ref]$null)) {
-                        $compIdx = [int]$computerIndex
-                        if ($compIdx -ge 0 -and $compIdx -lt $computers.Count) {
-                            $selectedComputer = $computers[$compIdx]
                             try {
-                                Remove-ADComputerServiceAccount -Identity $selectedComputer -ServiceAccount $selectedMSA.Name -Confirm:$false
-                                Write-Host "Permission for $selectedComputer removed from $($selectedMSA.Name)." -ForegroundColor Green
+                                Remove-ADComputerServiceAccount -Identity $computerToRemove.Name -ServiceAccount $selectedMSA.Name
+                                Write-Host "Removed $($computerToRemove.Name) from MSA to enforce single-computer limit." -ForegroundColor Green
                             } catch {
-                                Write-Host "Failed to remove $selectedComputer from $($selectedMSA.Name)." -ForegroundColor Red
-                                Write-Host "Error: $_" -ForegroundColor Red
+                                Write-Host "Failed to remove $($computerToRemove.Name). Error: $_" -ForegroundColor Red
                             }
-                        } else {
-                            Write-Host "Invalid selection number." -ForegroundColor Red
                         }
-                    } else {
-                        Write-Host "Invalid input." -ForegroundColor Red
                     }
+
+                    try {
+                        Add-ADComputerServiceAccount -Identity $computer -ServiceAccount $selectedMSA.Name
+                        Write-Host "$computer now has exclusive permission to use $($selectedMSA.Name)." -ForegroundColor Green
+                    } catch {
+                        Write-Host "Failed to add $computer to MSA. Error: $_" -ForegroundColor Red
+                    }
+                } else {
+                    Write-Host "This option is only for standalone MSAs. Group MSAs must be assigned to AD groups." -ForegroundColor Red
                 }
-            }
-            "3" {
-                $description = Read-Host "Enter new description"
-                Set-ADServiceAccount -Identity $selectedMSA.Name -Description $description
-                Write-Host "Description updated." -ForegroundColor Green
-            }
-            "4" {
-                View-MSAPrincipals -MSAName $selectedMSA.Name
-            }
-            "5" {
-                Remove-AllMSAReferences -MSAName $selectedMSA.Name
             }
             default {
                 Write-Host "Invalid option selected." -ForegroundColor Red
@@ -514,51 +451,36 @@ function Install-MSA {
         $selectedMSA = $msaList[$selection]
         $computerName = Read-Host "Enter the computer name where you want to install the MSA"
 
-        if ($selectedMSA.objectClass -contains "msDS-GroupManagedServiceAccount") {
-            # gMSA: Enforce AD group association
-            if (-not $selectedMSA.PrincipalsAllowedToRetrieveManagedPassword) {
-                Write-Host "This gMSA does not have an associated AD group." -ForegroundColor Red
-                Write-Host "Please associate an AD group before installation." -ForegroundColor Red
-                return
-            }
-
-            # Validate the AD group has computer members
-            $adGroupDN = $selectedMSA.PrincipalsAllowedToRetrieveManagedPassword[0]
-            $groupMembers = Get-ADGroupMember -Identity $adGroupDN | Where-Object { $_.ObjectClass -eq "computer" }
-
-            if ($groupMembers.Count -eq 0) {
-                Write-Host "The associated AD group does not have any computer members." -ForegroundColor Red
-                Write-Host "Please add computers to the AD group before installation." -ForegroundColor Red
-                return
-            }
-
-            Write-Host "The gMSA is successfully associated with AD group: $($adGroupDN)" -ForegroundColor Green
-            Write-Host "Computers in the AD group will now have access to the gMSA." -ForegroundColor Green
-            return
-        }
-
         if ($selectedMSA.objectClass -contains "msDS-ManagedServiceAccount") {
             # sMSA: Ensure only one machine is assigned
             $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount |
                                  Where-Object { $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName }
 
             if ($assignedComputers.Count -gt 0) {
-                Write-Host "This standalone MSA is already assigned to: $($assignedComputers.Name -join ', ')" -ForegroundColor Red
+                Write-Host "This standalone MSA is already assigned to: $($assignedComputers.Name -join ', ')" -ForegroundColor Yellow
                 Write-Host "Reassigning the sMSA to the new computer and removing previous assignments..." -ForegroundColor Yellow
 
                 # Remove all existing assignments
                 foreach ($computerToRemove in $assignedComputers) {
-                    Remove-ADComputerServiceAccount -Identity $computerToRemove.Name -ServiceAccount $selectedMSA.Name
-                    Write-Host "Removed $($computerToRemove.Name) from sMSA." -ForegroundColor Yellow
+                    try {
+                        Remove-ADComputerServiceAccount -Identity $computerToRemove.Name -ServiceAccount $selectedMSA.Name
+                        Write-Host "Removed $($computerToRemove.Name) from the MSA." -ForegroundColor Green
+                    } catch {
+                        Write-Host "Failed to remove $($computerToRemove.Name) from the MSA. Error: $_" -ForegroundColor Red
+                    }
                 }
             }
 
             # Assign the new computer
-            Add-ADComputerServiceAccount -Identity $computerName -ServiceAccount $selectedMSA.Name
-            Write-Host "MSA '$($selectedMSA.Name)' assigned to computer '$computerName' successfully." -ForegroundColor Green
+            try {
+                Add-ADComputerServiceAccount -Identity $computerName -ServiceAccount $selectedMSA.Name
+                Write-Host "MSA '$($selectedMSA.Name)' assigned to computer '$computerName' successfully." -ForegroundColor Green
+            } catch {
+                Write-Host "Failed to assign MSA to computer. Error: $_" -ForegroundColor Red
+            }
         }
     } catch {
-        Write-Host "Error installing MSA: $_" -ForegroundColor Red
+        Write-Host "Error during MSA installation: $_" -ForegroundColor Red
     }
 }
 
