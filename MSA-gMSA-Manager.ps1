@@ -12,6 +12,21 @@
 #   - Initial release with functions for creating, modifying, deleting, 
 #     and managing MSAs and gMSAs.
 # ================================================
+
+# Function to check if the script is running as administrator
+function Check-IsAdministrator {
+    $currentUser = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    if (-not $currentUser.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        Write-Host "This script must be run as an administrator. Please restart it with elevated privileges." -ForegroundColor Red
+        Read-Host "Press Enter to exit"
+        exit
+    }
+}
+
+# Call the function at the start of the script
+Check-IsAdministrator
+
+
 # Function to get the current logged-on user's username
 function Get-CurrentUsername {
     try {
