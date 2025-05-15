@@ -459,24 +459,18 @@ function Install-MSA {
                 
                 $computerName = Read-Host "Enter the computer name where you want to install the MSA"
                 
-                # Check permission using our improved method
-                $principals = Get-MSAPrincipals -MSAName $selectedMSA.Name
-                $computerPrincipals = $principals | Where-Object { $_.Type -eq "computer" }
-                $hasPermission = $false
-                
-                foreach ($comp in $computerPrincipals) {
-                    if ($comp.Name -eq $computerName) {
-                        $hasPermission = $true
-                        break
+                # Check if the MSA is already installed elsewhere
+                $assignedComputers = @()
+                foreach ($computer in Get-ADComputer -Filter * -Properties msDS-HostServiceAccount) {
+                    if ($computer."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName) {
+                        $assignedComputers += $computer.Name
                     }
                 }
                 
-                if (-not $hasPermission) {
-                    $addPermission = Read-Host "Computer '$computerName' doesn't have permission to use this MSA. Add permission? (y/n)"
-                    if ($addPermission -eq "y") {
-                        Add-ADComputerServiceAccount -Identity $computerName -ServiceAccount $selectedMSA.Name
-                        Write-Host "Added permission for '$computerName' to use MSA '$($selectedMSA.Name)'." -ForegroundColor Green
-                    }
+                if ($assignedComputers.Count -gt 0) {
+                    Write-Host "This MSA is already installed on the following computer(s): $($assignedComputers -join ', ')" -ForegroundColor Red
+                    Write-Host "Installation halted to prevent conflicts." -ForegroundColor Red
+                    return
                 }
                 
                 # Check if remote or local
