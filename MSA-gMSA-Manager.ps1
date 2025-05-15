@@ -338,7 +338,39 @@ function Modify-MSA {
                 }
             }
             "2" {
-                # Existing logic for removing computer principals
+                # Logic for removing computer principals
+                $principals = Get-MSAPrincipals -MSAName $selectedMSA.Name
+                $computers = $principals | Where-Object { $_.Type -eq "Computer" } | Select-Object -ExpandProperty Name
+
+                if ($computers.Count -eq 0) {
+                    Write-Host "No computers have permission to use this MSA." -ForegroundColor Yellow
+                } else {
+                    Write-Host "Computers with permission to use this MSA:" -ForegroundColor Yellow
+                    for ($i=0; $i -lt $computers.Count; $i++) {
+                        Write-Host "[$i] $($computers[$i])"
+                    }
+
+                    $computerIndex = Read-Host "Enter the number of the computer to remove (or 'c' to cancel)"
+                    if ($computerIndex -eq 'c') { break }
+
+                    if ([int]::TryParse($computerIndex, [ref]$null)) {
+                        $compIdx = [int]$computerIndex
+                        if ($compIdx -ge 0 -and $compIdx -lt $computers.Count) {
+                            $selectedComputer = $computers[$compIdx]
+                            try {
+                                Remove-ADComputerServiceAccount -Identity $selectedComputer -ServiceAccount $selectedMSA.Name -Confirm:$false
+                                Write-Host "Permission for $selectedComputer removed from $($selectedMSA.Name)." -ForegroundColor Green
+                            } catch {
+                                Write-Host "Failed to remove $selectedComputer from $($selectedMSA.Name)." -ForegroundColor Red
+                                Write-Host "Error: $_" -ForegroundColor Red
+                            }
+                        } else {
+                            Write-Host "Invalid selection number." -ForegroundColor Red
+                        }
+                    } else {
+                        Write-Host "Invalid input." -ForegroundColor Red
+                    }
+                }
             }
             "3" {
                 $description = Read-Host "Enter new description"
@@ -349,7 +381,7 @@ function Modify-MSA {
                 View-MSAPrincipals -MSAName $selectedMSA.Name
             }
             "5" {
-                # Existing logic for removing all assigned computers
+                Remove-AllMSAReferences -MSAName $selectedMSA.Name
             }
             default {
                 Write-Host "Invalid option selected." -ForegroundColor Red
