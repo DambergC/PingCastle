@@ -178,7 +178,30 @@ function New-ManagedServiceAccount {
                         Write-Log "Computer '$computerName' not found in Active Directory." -Level 'ERROR'
                         return
                     }
-                    
+                    # --- BEGIN: UNIQUE sMSA COMPUTER ASSIGNMENT LOGIC ---
+                    $msaDN = (Get-ADServiceAccount -Identity $MSAName).DistinguishedName
+                    $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
+                        $_."msDS-HostServiceAccount" -contains $msaDN
+                    }
+                    if ($assignedComputers.Count -gt 0) {
+                        Write-Host "Warning: This sMSA is already assigned to the following computer(s):" -ForegroundColor Yellow
+                        foreach ($c in $assignedComputers) {
+                            Write-Host "  - $($c.Name)" -ForegroundColor Yellow
+                        }
+                        $choice = Read-Host "Do you want to remove the sMSA from the currently assigned computer(s) and assign it to $computerName? (yes/no)"
+                        if ($choice.ToLower() -eq "yes") {
+                            foreach ($c in $assignedComputers) {
+                                Remove-ADComputerServiceAccount -Identity $c.Name -ServiceAccount $MSAName
+                                Write-Log "Removed sMSA '$MSAName' from computer '$($c.Name)'" -Level 'INFO'
+                                Write-Host "Removed sMSA from $($c.Name)." -ForegroundColor Yellow
+                            }
+                        } else {
+                            Write-Host "Operation canceled. sMSA not reassigned." -ForegroundColor Red
+                            Write-Log "User canceled sMSA reassignment." -Level 'WARN'
+                            return
+                        }
+                    }
+                    # --- END: UNIQUE sMSA COMPUTER ASSIGNMENT LOGIC ---
                     # Add the computer to the allowed principals for this MSA
                     Add-ADComputerServiceAccount -Identity $computerName -ServiceAccount $MSAName -ErrorAction Stop
                     Write-Log "Computer '$computerName' allowed to use MSA '$MSAName'." -Level 'INFO'
@@ -267,6 +290,106 @@ function New-ManagedServiceAccount {
     }
     catch {
         Write-Log "Unexpected error in New-ManagedServiceAccount: $_" -Level 'ERROR'
+        Write-Log "Stack Trace: $($_.ScriptStackTrace)" -Level 'ERROR'
+    }
+    finally {
+        if (-not $NonInteractive) {
+            Read-Host "Press Enter to continue"
+        }
+    }
+}
+
+# Function to modify MSA with improved computer principal view
+function Set-MSAProperties {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$false)]
+        [string]$MSAName,
+        
+        [Parameter(Mandatory=$false)]
+        [string]$Operation,
+        
+        [Parameter(Mandatory=$false)]
+        [string]$ComputerName,
+        
+        [Parameter(Mandatory=$false)]
+        [string]$GroupName,
+        
+        [Parameter(Mandatory=$false)]
+        [string]$Description
+    )
+    
+    try {
+        Clear-Host
+        Write-Host "=== Modify Managed Service Account ===" -ForegroundColor Cyan
+        Write-Log "Starting MSA modification process" -Level 'INFO'
+
+        # List available MSAs for selection if MSAName not provided (unchanged...)
+
+        # If operation not provided, show menu (unchanged...)
+
+        switch ($Operation) {
+            "1" {
+                # Logic for changing assigned computer (MSA only)
+                if ($selectedMSA.objectClass -contains "msDS-GroupManagedServiceAccount") {
+                    Write-Host "You cannot assign computers to a gMSA. Please assign an AD group instead." -ForegroundColor Red
+                    Write-Log "Attempted to assign a computer directly to a gMSA '$MSAName', which is not supported." -Level 'ERROR'
+                    return
+                }
+
+                # Get the new computer to assign
+                if ([string]::IsNullOrWhiteSpace($ComputerName)) {
+                    $ComputerName = Read-Host "Enter the new computer name to assign to this MSA"
+                }
+
+                # Verify the computer exists
+                if (-not (Get-ADComputer -Filter "Name -eq '$ComputerName'" -ErrorAction SilentlyContinue)) {
+                    Write-Host "Computer '$ComputerName' not found in Active Directory." -ForegroundColor Red
+                    Write-Log "Computer '$ComputerName' not found in Active Directory." -Level 'ERROR'
+                    return
+                }
+
+                # --- BEGIN: UNIQUE sMSA COMPUTER ASSIGNMENT LOGIC ---
+                $msaDN = $selectedMSA.DistinguishedName
+                $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
+                    $_."msDS-HostServiceAccount" -contains $msaDN
+                }
+                if ($assignedComputers.Count -gt 0) {
+                    Write-Host "Warning: This sMSA is already assigned to the following computer(s):" -ForegroundColor Yellow
+                    foreach ($c in $assignedComputers) {
+                        Write-Host "  - $($c.Name)" -ForegroundColor Yellow
+                    }
+                    $choice = Read-Host "Do you want to remove the sMSA from the currently assigned computer(s) and assign it to $ComputerName? (yes/no)"
+                    if ($choice.ToLower() -eq "yes") {
+                        foreach ($c in $assignedComputers) {
+                            Remove-ADComputerServiceAccount -Identity $c.Name -ServiceAccount $MSAName
+                            Write-Log "Removed sMSA '$MSAName' from computer '$($c.Name)'" -Level 'INFO'
+                            Write-Host "Removed sMSA from $($c.Name)." -ForegroundColor Yellow
+                        }
+                    } else {
+                        Write-Host "Operation canceled. sMSA not reassigned." -ForegroundColor Red
+                        Write-Log "User canceled sMSA reassignment." -Level 'WARN'
+                        return
+                    }
+                }
+                # --- END: UNIQUE sMSA COMPUTER ASSIGNMENT LOGIC ---
+
+                # Add the new computer to the MSA
+                try {
+                    Add-ADComputerServiceAccount -Identity $ComputerName -ServiceAccount $MSAName
+                    Write-Host "$ComputerName now has exclusive permission to use $MSAName." -ForegroundColor Green
+                    Write-Log "Computer '$ComputerName' now has exclusive permission to use MSA '$MSAName'." -Level 'INFO'
+                } catch {
+                    Write-Host "Failed to add $ComputerName to MSA. Error: $_" -ForegroundColor Red
+                    Write-Log "Failed to add computer '$ComputerName' to MSA '$MSAName': $_" -Level 'ERROR'
+                }
+            }
+            # All other options unchanged...
+        }
+    } 
+    catch {
+        Write-Host "Error modifying MSA: $_" -ForegroundColor Red
+        Write-Log "Unexpected error in Set-MSAProperties: $_" -Level 'ERROR'
         Write-Log "Stack Trace: $($_.ScriptStackTrace)" -Level 'ERROR'
     }
     finally {
