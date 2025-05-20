@@ -209,31 +209,23 @@ function New-ManagedServiceAccount {
                 }
             } 
             else {
-                # Check if AD group is created
+                # gMSA logic unchanged...
                 $isAdGroupCreated = Read-Host "Is the AD group created? (yes/no)"
                 if ($isAdGroupCreated.ToLower() -eq "yes") {
                     $adGroupName = Read-Host "Please provide the AD group name"
-                    
-                    # Verify the group exists
                     if (-not (Get-ADGroup -Filter "Name -eq '$adGroupName'" -ErrorAction SilentlyContinue)) {
                         Write-Log "AD group '$adGroupName' not found in Active Directory." -Level 'ERROR'
                         return
                     }
-                    
                     Write-Log "Creating group MSA (gMSA) '$MSAName' associated with AD group '$adGroupName'..." -Level 'INFO'
-                    
-                    # Check for KDS Root Key
                     $kdsRootKeys = Get-KdsRootKey
                     if ($null -eq $kdsRootKeys) {
                         Write-Log "No KDS Root Key found. Creating one..." -Level 'WARN'
                         Add-KdsRootKey -EffectiveTime ((Get-Date).AddHours(-10))
                         Write-Log "KDS Root Key created. Waiting for replication..." -Level 'INFO'
-                        Start-Sleep -Seconds 5  # Brief pause
+                        Start-Sleep -Seconds 5
                     }
-                    
-                    # Create the group MSA
                     New-ADServiceAccount -Name $MSAName -PrincipalsAllowedToRetrieveManagedPassword $adGroupName -ErrorAction Stop
-                    
                     Write-Log "Group MSA '$MSAName' created successfully." -Level 'INFO'
                     Write-Host "Group MSA '$MSAName' created successfully." -ForegroundColor Green
                 }
@@ -241,7 +233,6 @@ function New-ManagedServiceAccount {
                     Write-Log "AD group is not created. Stopping gMSA creation." -Level 'WARN'
                     Write-Host "AD group is not created. Would you like to create one now? (yes/no)" -ForegroundColor Yellow
                     $createGroup = Read-Host
-                    
                     if ($createGroup.ToLower() -eq "yes") {
                         $groupName = Read-Host "Enter a name for the new AD group"
                         try {
@@ -263,15 +254,11 @@ function New-ManagedServiceAccount {
         }
         catch {
             Write-Log "Error creating MSA: $_" -Level 'ERROR'
-            
             $errorMsg = $_.Exception.Message
-            
-            # Provide specific guidance based on the error message
             if ($errorMsg -like "*Parameter set cannot be resolved*") {
                 Write-Log "Your Active Directory version might require different parameter combinations." -Level 'WARN'
                 Write-Host "`nYour Active Directory version might require different parameter combinations." -ForegroundColor Yellow
                 Write-Host "Please try one of these commands manually in a PowerShell window:" -ForegroundColor Yellow
-                
                 if ($MSAType -eq '1') {
                     Write-Host "`nFor standalone MSA (sMSA):" -ForegroundColor Cyan
                     Write-Host "New-ADServiceAccount -Name $MSAName -RestrictToSingleComputer" -ForegroundColor White
@@ -296,6 +283,153 @@ function New-ManagedServiceAccount {
         if (-not $NonInteractive) {
             Read-Host "Press Enter to continue"
         }
+    }
+}
+# Improved List function with sMSA autofix
+function List-ManagedServiceAccounts {
+    [CmdletBinding()]
+    param()
+
+    try {
+        Clear-Host
+        Write-Host "=== List of Managed Service Accounts (MSAs and gMSAs) ===" -ForegroundColor Cyan
+
+        $msaList = Get-ADServiceAccount -Filter * -Properties *
+        if (-not $msaList -or $msaList.Count -eq 0) {
+            Write-Host "No Managed Service Accounts found." -ForegroundColor Yellow
+            return
+        }
+
+        foreach ($item in $msaList) {
+            $msaObject = Get-ADServiceAccount -Identity $item.Name -Properties *
+            Write-Host ""
+            Write-Host "Name: $($msaObject.Name)" -ForegroundColor White
+
+            if ($msaObject.objectClass -eq "msDS-ManagedServiceAccount") {
+                Write-Host "  Type: sMSA (Standalone Managed Service Account)"
+            } elseif ($msaObject.objectClass -eq "msDS-GroupManagedServiceAccount") {
+                Write-Host "  Type: gMSA (Group Managed Service Account)"
+            } else {
+                Write-Host "  Type: Unknown"
+            }
+            Write-Host "  Enabled: $($msaObject.Enabled)"
+            Write-Host "  Description: $($msaObject.Description)"
+            Write-Host "  Created: $($msaObject.Created)"
+            Write-Host "  Modified: $($msaObject.Modified)"
+
+            $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
+                $_."msDS-HostServiceAccount" -contains $msaObject.DistinguishedName
+            }
+            $assignedComputersList = $assignedComputers | Select-Object -ExpandProperty Name
+
+            if ($msaObject.objectClass -eq "msDS-ManagedServiceAccount") {
+                if ($assignedComputersList.Count -gt 1) {
+                    Write-Host "  WARNING: sMSA assigned to multiple computers! Only one assignment is allowed." -ForegroundColor Red
+                    Write-Host "  Assigned Computers: $($assignedComputersList -join ', ')" -ForegroundColor Red
+
+                    $autofix = Read-Host "  Do you want to automatically remove all but one assignment for this sMSA? (yes/no)"
+                    if ($autofix.ToLower() -eq "yes") {
+                        $toRemove = $assignedComputers | Select-Object -Skip 1
+                        foreach ($comp in $toRemove) {
+                            Remove-ADComputerServiceAccount -Identity $comp.Name -ServiceAccount $msaObject.Name
+                            Write-Host "    Removed sMSA $($msaObject.Name) from $($comp.Name)" -ForegroundColor Yellow
+                        }
+                        $finalComputer = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
+                            $_."msDS-HostServiceAccount" -contains $msaObject.DistinguishedName
+                        } | Select-Object -ExpandProperty Name
+                        Write-Host "  Final Assigned Computer: $finalComputer" -ForegroundColor Green
+                    }
+                } else {
+                    Write-Host "  Assigned Computer: $($assignedComputersList -join ', ')"
+                }
+            } else {
+                Write-Host "  Assigned Computers: $($assignedComputersList -join ', ')"
+            }
+
+            if ($msaObject.objectClass -eq "msDS-GroupManagedServiceAccount" -and $msaObject.PrincipalsAllowedToRetrieveManagedPassword) {
+                Write-Host "  Principals Allowed (Groups):"
+                foreach ($dn in $msaObject.PrincipalsAllowedToRetrieveManagedPassword) {
+                    try {
+                        $grp = Get-ADGroup -Identity $dn -Properties Name
+                        Write-Host "    - $($grp.Name)"
+                    } catch {
+                        Write-Host "    - $dn"
+                    }
+                }
+            }
+        }
+    }
+    catch {
+        Write-Host "Error listing MSAs: $_" -ForegroundColor Red
+    }
+    finally {
+        if (-not $NonInteractive) {
+            Write-Host ""
+            Read-Host "Press Enter to continue"
+        }
+    }
+}
+
+# In Set-MSAProperties, option 1, enforce single-computer sMSA assignment before Add-ADComputerServiceAccount:
+# Paste this before assignment (adjust variables if needed):
+# --- BEGIN: UNIQUE sMSA COMPUTER ASSIGNMENT LOGIC ---
+$msaDN = $selectedMSA.DistinguishedName
+$assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
+    $_."msDS-HostServiceAccount" -contains $msaDN
+}
+if ($assignedComputers.Count -gt 0) {
+    Write-Host "Warning: This sMSA is already assigned to the following computer(s):" -ForegroundColor Yellow
+    foreach ($c in $assignedComputers) {
+        Write-Host "  - $($c.Name)" -ForegroundColor Yellow
+    }
+    $choice = Read-Host "Do you want to remove the sMSA from the currently assigned computer(s) and assign it to $ComputerName? (yes/no)"
+    if ($choice.ToLower() -eq "yes") {
+        foreach ($c in $assignedComputers) {
+            Remove-ADComputerServiceAccount -Identity $c.Name -ServiceAccount $MSAName
+            Write-Log "Removed sMSA '$MSAName' from computer '$($c.Name)'" -Level 'INFO'
+            Write-Host "Removed sMSA from $($c.Name)." -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "Operation canceled. sMSA not reassigned." -ForegroundColor Red
+        Write-Log "User canceled sMSA reassignment." -Level 'WARN'
+        return
+    }
+}
+# --- END: UNIQUE sMSA COMPUTER ASSIGNMENT LOGIC ---
+
+# ...[all other original functions remain unchanged]...
+
+# Example menu:
+if (-not $NonInteractive -and -not $Action) {
+    while ($true) {
+        Clear-Host
+        Write-Host "=== Managed Service Account Manager ===" -ForegroundColor Cyan
+        Write-Host "1. Create Managed Service Account"
+        Write-Host "2. Modify Managed Service Account"
+        Write-Host "3. Delete Managed Service Account"
+        Write-Host "4. Install Managed Service Account"
+        Write-Host "5. List Managed Service Accounts"
+        Write-Host "6. Exit"
+        $choice = Read-Host "Select an option [1-6]"
+        switch ($choice) {
+            "1" { New-ManagedServiceAccount }
+            "2" { Set-MSAProperties }
+            "3" { Remove-ManagedServiceAccount }
+            "4" { Install-ManagedServiceAccount }
+            "5" { List-ManagedServiceAccounts }
+            "6" { break }
+            default { Write-Host "Invalid selection." -ForegroundColor Red; Start-Sleep 1 }
+        }
+    }
+} elseif ($Action) {
+    switch ($Action) {
+        "Create" { New-ManagedServiceAccount -MSAName $MSAName -MSAType $MSAType }
+        "Modify" { Set-MSAProperties -MSAName $MSAName }
+        "Delete" { Remove-ManagedServiceAccount -MSAName $MSAName }
+        "Install" { Install-ManagedServiceAccount -MSAName $MSAName -ComputerName $ComputerName }
+        "List" { List-ManagedServiceAccounts }
+        # Add others as needed...
+        default { Write-Host "Unknown action: $Action" -ForegroundColor Red }
     }
 }
 
