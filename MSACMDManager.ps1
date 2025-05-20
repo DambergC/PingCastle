@@ -600,54 +600,77 @@ function Set-MSAProperties {
         }
 
         switch ($Operation) {
-            "1" {
-                # Logic for changing assigned computer (MSA only)
-                if ($selectedMSA.objectClass -contains "msDS-GroupManagedServiceAccount") {
-                    Write-Host "You cannot assign computers to a gMSA. Please assign an AD group instead." -ForegroundColor Red
-                    Write-Log "Attempted to assign a computer directly to a gMSA '$MSAName', which is not supported." -Level 'ERROR'
-                    return
-                }
+"1" {
+    # Logic for changing assigned computer (MSA only)
+    if ($selectedMSA.objectClass -contains "msDS-GroupManagedServiceAccount") {
+        Write-Host "You cannot assign computers to a gMSA. Please assign an AD group instead." -ForegroundColor Red
+        Write-Log "Attempted to assign a computer directly to a gMSA '$MSAName', which is not supported." -Level 'ERROR'
+        return
+    }
 
-                # Get the new computer to assign
-                if ([string]::IsNullOrWhiteSpace($ComputerName)) {
-                    $ComputerName = Read-Host "Enter the new computer name to assign to this MSA"
-                }
+    # Get the new computer to assign
+    if ([string]::IsNullOrWhiteSpace($ComputerName)) {
+        $ComputerName = Read-Host "Enter the new computer name to assign to this MSA"
+    }
 
-                # Verify the computer exists
-                if (-not (Get-ADComputer -Filter "Name -eq '$ComputerName'" -ErrorAction SilentlyContinue)) {
-                    Write-Host "Computer '$ComputerName' not found in Active Directory." -ForegroundColor Red
-                    Write-Log "Computer '$ComputerName' not found in Active Directory." -Level 'ERROR'
-                    return
-                }
+    # Verify the computer exists
+    if (-not (Get-ADComputer -Filter "Name -eq '$ComputerName'" -ErrorAction SilentlyContinue)) {
+        Write-Host "Computer '$ComputerName' not found in Active Directory." -ForegroundColor Red
+        Write-Log "Computer '$ComputerName' not found in Active Directory." -Level 'ERROR'
+        return
+    }
 
-                # Check for existing assignments
-                $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount |
-                                     Where-Object { $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName }
-
-                # Remove existing assignments
-                if ($assignedComputers.Count -gt 0) {
-                    foreach ($computerToRemove in $assignedComputers) {
-                        try {
-                            Remove-ADComputerServiceAccount -Identity $computerToRemove.Name -ServiceAccount $MSAName
-                            Write-Host "Removed $($computerToRemove.Name) from the MSA." -ForegroundColor Yellow
-                            Write-Log "Removed computer '$($computerToRemove.Name)' from MSA '$MSAName'." -Level 'INFO'
-                        } catch {
-                            Write-Host "Failed to remove $($computerToRemove.Name) from the MSA. Error: $_" -ForegroundColor Red
-                            Write-Log "Failed to remove computer '$($computerToRemove.Name)' from MSA '$MSAName': $_" -Level 'ERROR'
-                        }
-                    }
-                }
-
-                # Add the new computer to the MSA
-                try {
-                    Add-ADComputerServiceAccount -Identity $ComputerName -ServiceAccount $MSAName
-                    Write-Host "$ComputerName now has exclusive permission to use $MSAName." -ForegroundColor Green
-                    Write-Log "Computer '$ComputerName' now has exclusive permission to use MSA '$MSAName'." -Level 'INFO'
-                } catch {
-                    Write-Host "Failed to add $ComputerName to MSA. Error: $_" -ForegroundColor Red
-                    Write-Log "Failed to add computer '$ComputerName' to MSA '$MSAName': $_" -Level 'ERROR'
-                }
+    # Remove all existing assignments
+    $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
+        $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName
+    }
+    if ($assignedComputers.Count -gt 0) {
+        foreach ($computerToRemove in $assignedComputers) {
+            try {
+                Remove-ADComputerServiceAccount -Identity $computerToRemove.Name -ServiceAccount $MSAName
+                Write-Host "Removed $($computerToRemove.Name) from the MSA." -ForegroundColor Yellow
+                Write-Log "Removed computer '$($computerToRemove.Name)' from MSA '$MSAName'." -Level 'INFO'
+            } catch {
+                Write-Host "Failed to remove $($computerToRemove.Name) from the MSA. Error: $_" -ForegroundColor Red
+                Write-Log "Failed to remove computer '$($computerToRemove.Name)' from MSA '$MSAName': $_" -Level 'ERROR'
             }
+        }
+    }
+
+    # Add the new computer to the MSA
+    try {
+        Add-ADComputerServiceAccount -Identity $ComputerName -ServiceAccount $MSAName
+        Write-Host "$ComputerName now has exclusive permission to use $MSAName." -ForegroundColor Green
+        Write-Log "Computer '$ComputerName' now has exclusive permission to use MSA '$MSAName'." -Level 'INFO'
+
+        # --- Verify only one assignment exists ---
+        $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
+            $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName
+        }
+
+        if ($assignedComputers.Count -ne 1) {
+            Write-Host "WARNING: There are $($assignedComputers.Count) computers assigned to this sMSA! Only one is allowed." -ForegroundColor Red
+            # Automatically remove excess assignments
+            $toRemove = $assignedComputers | Where-Object { $_.Name -ne $ComputerName }
+            foreach ($comp in $toRemove) {
+                Remove-ADComputerServiceAccount -Identity $comp.Name -ServiceAccount $MSAName
+                Write-Host "Removed $($comp.Name) from the sMSA." -ForegroundColor Yellow
+                Write-Log "Removed computer '$($comp.Name)' from sMSA '$MSAName'." -Level 'INFO'
+            }
+        }
+
+        # --- Ensure no group principals for sMSA ---
+        $msaObject = Get-ADServiceAccount -Identity $MSAName -Properties objectClass, PrincipalsAllowedToRetrieveManagedPassword
+        if ($msaObject.objectClass -eq "msDS-ManagedServiceAccount" -and $msaObject.PrincipalsAllowedToRetrieveManagedPassword) {
+            Set-ADServiceAccount -Identity $MSAName -PrincipalsAllowedToRetrieveManagedPassword $null
+            Write-Host "Cleared group principals for sMSA $MSAName." -ForegroundColor Yellow
+            Write-Log "Cleared group principals for sMSA $MSAName." -Level 'INFO'
+        }
+    } catch {
+        Write-Host "Failed to add $ComputerName to MSA. Error: $_" -ForegroundColor Red
+        Write-Log "Failed to add computer '$ComputerName' to MSA '$MSAName': $_" -Level 'ERROR'
+    }
+}
             "2" {
                 # Logic for assigning AD groups (gMSA only)
                 if ($selectedMSA.objectClass -contains "msDS-GroupManagedServiceAccount") {
