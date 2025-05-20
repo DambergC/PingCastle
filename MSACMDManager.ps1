@@ -3,8 +3,8 @@
     Management tool for Active Directory Managed Service Accounts (MSAs and gMSAs).
 
 .DESCRIPTION
-    This script provides a comprehensive set of functions for managing Managed Service Accounts
-    in Active Directory, including creating, modifying, deleting, installing, and listing MSAs.
+    Comprehensive functions for managing Managed Service Accounts in Active Directory, 
+    including creation, modification, deletion, installation, listing, and assignment management.
 
 .PARAMETER NonInteractive
     Run in non-interactive mode for scripted operations.
@@ -22,78 +22,56 @@
     The type of MSA to create (1 for sMSA, 2 for gMSA).
 
 .EXAMPLE
-    .\MSA-gMSA-Manager.ps1
+    .\MSACMDManager.ps1
     Runs the script in interactive menu mode.
 
 .EXAMPLE
-    .\MSA-gMSA-Manager.ps1 -NonInteractive -Action Create -MSAName "WebAppService" -MSAType "2"
+    .\MSACMDManager.ps1 -NonInteractive -Action Create -MSAName "WebAppService" -MSAType "2"
     Creates a new gMSA named WebAppService in non-interactive mode.
 
 .NOTES
     Author: DambergC
     Date Created: 2025-05-14
-    Last Updated: 2025-05-18
+    Last Updated: 2025-05-20
 #>
 
 [CmdletBinding()]
 param(
-    [Parameter()]
     [switch]$NonInteractive,
-    
-    [Parameter()]
     [ValidateSet('Create', 'Modify', 'Delete', 'Install', 'List', 'Test', 'Export', 'Import')]
     [string]$Action,
-    
-    [Parameter()]
     [string]$MSAName,
-    
-    [Parameter()]
     [string]$ComputerName,
-    
-    [Parameter()]
     [ValidateSet('1', '2')]
     [string]$MSAType,
-
-    [Parameter()]
     [string]$LogPath = "$env:TEMP\MSA-Manager.log",
-
-    [Parameter()]
     [string]$ExportPath,
-
-    [Parameter()]
     [string]$ImportPath
 )
 
-# Function for logging
+# =================== Helper Functions ===================
+
 function Write-Log {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory=$true)]
-        [string]$Message,
-        
-        [Parameter()]
-        [ValidateSet('INFO','WARN','ERROR')]
-        [string]$Level = 'INFO',
-        
-        [Parameter()]
+        [Parameter(Mandatory=$true)][string]$Message,
+        [ValidateSet('INFO','WARN','ERROR')][string]$Level = 'INFO',
         [string]$LogPath = $script:LogPath
     )
-    
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $logLine = "[$timestamp] [$Level] $Message"
-    
-    if ($Level -eq 'ERROR') {
-        Write-Host $logLine -ForegroundColor Red
-    } elseif ($Level -eq 'WARN') {
-        Write-Host $logLine -ForegroundColor Yellow
-    } else {
-        Write-Host $logLine
+    switch ($Level) {
+        'ERROR' { Write-Host $logLine -ForegroundColor Red }
+        'WARN'  { Write-Host $logLine -ForegroundColor Yellow }
+        default { Write-Host $logLine }
     }
-    
     Add-Content -Path $LogPath -Value $logLine -ErrorAction SilentlyContinue
 }
 
-# Ensure Active Directory module is available
+function MaybeClearHost {
+    if (-not $NonInteractive) { Clear-Host }
+}
+
 function Test-ADModule {
     if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
         Write-Log "Active Directory module not found. Installing..." -Level 'WARN'
@@ -107,210 +85,169 @@ function Test-ADModule {
             Write-Log $_.Exception.Message -Level 'ERROR'
             return $false
         }
-    }
-    else {
+    } else {
         Import-Module ActiveDirectory
     }
     return $true
 }
 
-# Function to create a new MSA - Enhanced with validation and logging
+function Test-ADObjectExists {
+    param(
+        [Parameter(Mandatory)][ValidateSet('ServiceAccount', 'Computer', 'Group')]$Type,
+        [Parameter(Mandatory)][string]$Name
+    )
+    switch ($Type.ToLower()) {
+        'serviceaccount' { return (Get-ADServiceAccount -Filter "Name -eq '$Name'" -ErrorAction SilentlyContinue) }
+        'computer'       { return (Get-ADComputer -Filter "Name -eq '$Name'" -ErrorAction SilentlyContinue) }
+        'group'          { return (Get-ADGroup -Filter "Name -eq '$Name'" -ErrorAction SilentlyContinue) }
+        default          { return $null }
+    }
+}
+
+function Select-MSA {
+    param([string]$Prompt = "Select a Managed Service Account:")
+    $msaList = Get-ADServiceAccount -Filter * | Select-Object Name
+    if (-not $msaList) {
+        Write-Host "No MSAs found." -ForegroundColor Yellow
+        return $null
+    }
+    $msaList = @($msaList)
+    for ($i = 0; $i -lt $msaList.Count; $i++) {
+        Write-Host "[$i] $($msaList[$i].Name)"
+    }
+    $selection = Read-Host "$Prompt (number or 'c' to cancel)"
+    if ($selection -eq 'c') { return $null }
+    if ([int]::TryParse($selection, [ref]$null) -and $selection -ge 0 -and $selection -lt $msaList.Count) {
+        return $msaList[$selection].Name
+    }
+    Write-Host "Invalid selection." -ForegroundColor Red
+    return $null
+}
+
+# =================== MSA Management Functions ===================
+
 function New-ManagedServiceAccount {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$false)]
         [string]$MSAName,
-
-        [Parameter(Mandatory=$false)]
-        [ValidateSet('1', '2')]
-        [string]$MSAType
+        [ValidateSet('1', '2')][string]$MSAType
     )
-
     try {
-        Clear-Host
+        MaybeClearHost
         Write-Host "=== Create New Managed Service Account ===" -ForegroundColor Cyan
         Write-Log "Starting MSA creation process" -Level 'INFO'
-        
-        # Get MSA name if not provided
+
         if ([string]::IsNullOrWhiteSpace($MSAName)) {
             $MSAName = Read-Host "Enter the name for the new Managed Service Account"
-            
-            # Validate MSA name
             if ([string]::IsNullOrWhiteSpace($MSAName) -or $MSAName -match '\s') {
                 Write-Log "Invalid MSA name. Name cannot be empty or contain spaces." -Level 'ERROR'
                 return
             }
         }
-        
-        # Check if MSA already exists
-        if (Get-ADServiceAccount -Filter "Name -eq '$MSAName'" -ErrorAction SilentlyContinue) {
+        if (Test-ADObjectExists -Type ServiceAccount -Name $MSAName) {
             Write-Log "An MSA with name '$MSAName' already exists." -Level 'ERROR'
             return
         }
-        
-        # Get MSA type if not provided
         if ([string]::IsNullOrWhiteSpace($MSAType)) {
             $MSAType = Read-Host "Create as: (1) sMSA (standalone) or (2) gMSA (group)"
-            
-            # Validate MSA type
             if ($MSAType -ne '1' -and $MSAType -ne '2') {
                 Write-Log "Invalid MSA type. Must be '1' for sMSA or '2' for gMSA." -Level 'ERROR'
                 return
             }
         }
-        
-        try {
-            if ($MSAType -eq '1') {
-                # Create standalone MSA (sMSA)
-                Write-Log "Creating standalone MSA (sMSA) '$MSAName'..." -Level 'INFO'
-                
-                New-ADServiceAccount -Name $MSAName -RestrictToSingleComputer -ErrorAction Stop
-                
-                Write-Log "Standalone MSA '$MSAName' created successfully." -Level 'INFO'
-                Write-Host "Standalone MSA '$MSAName' created successfully." -ForegroundColor Green
-                
-                # Ask for the computer to bind this MSA to
-                $computerName = Read-Host "Enter the computer name to bind this sMSA to"
-                
-                if (-not [string]::IsNullOrWhiteSpace($computerName)) {
-                    # Verify the computer exists in AD
-                    if (-not (Get-ADComputer -Filter "Name -eq '$computerName'" -ErrorAction SilentlyContinue)) {
-                        Write-Log "Computer '$computerName' not found in Active Directory." -Level 'ERROR'
-                        return
-                    }
-                    # --- BEGIN: UNIQUE sMSA COMPUTER ASSIGNMENT LOGIC ---
-                    $msaDN = (Get-ADServiceAccount -Identity $MSAName).DistinguishedName
-                    $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
-                        $_."msDS-HostServiceAccount" -contains $msaDN
-                    }
-                    if ($assignedComputers.Count -gt 0) {
-                        Write-Host "Warning: This sMSA is already assigned to the following computer(s):" -ForegroundColor Yellow
+
+        if ($MSAType -eq '1') {
+            Write-Log "Creating standalone MSA (sMSA) '$MSAName'..." -Level 'INFO'
+            New-ADServiceAccount -Name $MSAName -RestrictToSingleComputer -ErrorAction Stop
+            Write-Host "Standalone MSA '$MSAName' created successfully." -ForegroundColor Green
+
+            $computerName = Read-Host "Enter the computer name to bind this sMSA to"
+            if (-not [string]::IsNullOrWhiteSpace($computerName)) {
+                if (-not (Test-ADObjectExists -Type Computer -Name $computerName)) {
+                    Write-Log "Computer '$computerName' not found in Active Directory." -Level 'ERROR'
+                    return
+                }
+                $msaDN = (Get-ADServiceAccount -Identity $MSAName).DistinguishedName
+                $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
+                    $_."msDS-HostServiceAccount" -contains $msaDN
+                }
+                if ($assignedComputers.Count -gt 0) {
+                    Write-Host "Warning: This sMSA is already assigned to: $($assignedComputers.Name -join ', ')" -ForegroundColor Yellow
+                    $choice = Read-Host "Remove the sMSA from those computers and assign to $computerName? (yes/no)"
+                    if ($choice.ToLower() -eq "yes") {
                         foreach ($c in $assignedComputers) {
-                            Write-Host "  - $($c.Name)" -ForegroundColor Yellow
+                            Remove-ADComputerServiceAccount -Identity $c.Name -ServiceAccount $MSAName
+                            Write-Log "Removed sMSA '$MSAName' from computer '$($c.Name)'" -Level 'INFO'
                         }
-                        $choice = Read-Host "Do you want to remove the sMSA from the currently assigned computer(s) and assign it to $computerName? (yes/no)"
-                        if ($choice.ToLower() -eq "yes") {
-                            foreach ($c in $assignedComputers) {
-                                Remove-ADComputerServiceAccount -Identity $c.Name -ServiceAccount $MSAName
-                                Write-Log "Removed sMSA '$MSAName' from computer '$($c.Name)'" -Level 'INFO'
-                                Write-Host "Removed sMSA from $($c.Name)." -ForegroundColor Yellow
-                            }
-                        } else {
-                            Write-Host "Operation canceled. sMSA not reassigned." -ForegroundColor Red
-                            Write-Log "User canceled sMSA reassignment." -Level 'WARN'
-                            return
-                        }
-                    }
-                    # --- END: UNIQUE sMSA COMPUTER ASSIGNMENT LOGIC ---
-                    # Add the computer to the allowed principals for this MSA
-                    Add-ADComputerServiceAccount -Identity $computerName -ServiceAccount $MSAName -ErrorAction Stop
-                    Write-Log "Computer '$computerName' allowed to use MSA '$MSAName'." -Level 'INFO'
-                    Write-Host "Computer '$computerName' allowed to use MSA '$MSAName'." -ForegroundColor Green
-                }
-            } 
-            else {
-                # gMSA logic unchanged...
-                $isAdGroupCreated = Read-Host "Is the AD group created? (yes/no)"
-                if ($isAdGroupCreated.ToLower() -eq "yes") {
-                    $adGroupName = Read-Host "Please provide the AD group name"
-                    if (-not (Get-ADGroup -Filter "Name -eq '$adGroupName'" -ErrorAction SilentlyContinue)) {
-                        Write-Log "AD group '$adGroupName' not found in Active Directory." -Level 'ERROR'
+                    } else {
+                        Write-Host "Operation canceled. sMSA not reassigned." -ForegroundColor Red
+                        Write-Log "User canceled sMSA reassignment." -Level 'WARN'
                         return
                     }
-                    Write-Log "Creating group MSA (gMSA) '$MSAName' associated with AD group '$adGroupName'..." -Level 'INFO'
-                    $kdsRootKeys = Get-KdsRootKey
-                    if ($null -eq $kdsRootKeys) {
-                        Write-Log "No KDS Root Key found. Creating one..." -Level 'WARN'
-                        Add-KdsRootKey -EffectiveTime ((Get-Date).AddHours(-10))
-                        Write-Log "KDS Root Key created. Waiting for replication..." -Level 'INFO'
-                        Start-Sleep -Seconds 5
-                    }
-                    New-ADServiceAccount -Name $MSAName -PrincipalsAllowedToRetrieveManagedPassword $adGroupName -ErrorAction Stop
-                    Write-Log "Group MSA '$MSAName' created successfully." -Level 'INFO'
-                    Write-Host "Group MSA '$MSAName' created successfully." -ForegroundColor Green
                 }
-                elseif ($isAdGroupCreated.ToLower() -eq "no") {
-                    Write-Log "AD group is not created. Stopping gMSA creation." -Level 'WARN'
-                    Write-Host "AD group is not created. Would you like to create one now? (yes/no)" -ForegroundColor Yellow
-                    $createGroup = Read-Host
-                    if ($createGroup.ToLower() -eq "yes") {
-                        $groupName = Read-Host "Enter a name for the new AD group"
-                        try {
-                            New-ADGroup -Name $groupName -GroupScope Global -GroupCategory Security
-                            Write-Log "AD group '$groupName' created successfully." -Level 'INFO'
-                            Write-Host "AD group '$groupName' created successfully. Now you can create the gMSA." -ForegroundColor Green
-                        }
-                        catch {
-                            Write-Log "Error creating AD group: $_" -Level 'ERROR'
-                        }
-                    }
+                Add-ADComputerServiceAccount -Identity $computerName -ServiceAccount $MSAName -ErrorAction Stop
+                Write-Log "Computer '$computerName' allowed to use MSA '$MSAName'." -Level 'INFO'
+                Write-Host "Computer '$computerName' allowed to use MSA '$MSAName'." -ForegroundColor Green
+            }
+        } else {
+            $isAdGroupCreated = Read-Host "Is the AD group created? (yes/no)"
+            if ($isAdGroupCreated.ToLower() -eq "yes") {
+                $adGroupName = Read-Host "Please provide the AD group name"
+                if (-not (Test-ADObjectExists -Type Group -Name $adGroupName)) {
+                    Write-Log "AD group '$adGroupName' not found in Active Directory." -Level 'ERROR'
                     return
                 }
-                else {
-                    Write-Log "Invalid input. Please respond with 'yes' or 'no'." -Level 'ERROR'
-                    return
+                Write-Log "Creating group MSA (gMSA) '$MSAName' associated with AD group '$adGroupName'..." -Level 'INFO'
+                if (-not (Get-KdsRootKey)) {
+                    Write-Log "No KDS Root Key found. Creating one..." -Level 'WARN'
+                    Add-KdsRootKey -EffectiveTime ((Get-Date).AddHours(-10))
+                    Write-Log "KDS Root Key created. Waiting for replication..." -Level 'INFO'
+                    Start-Sleep -Seconds 5
                 }
+                New-ADServiceAccount -Name $MSAName -PrincipalsAllowedToRetrieveManagedPassword $adGroupName -ErrorAction Stop
+                Write-Log "Group MSA '$MSAName' created successfully." -Level 'INFO'
+                Write-Host "Group MSA '$MSAName' created successfully." -ForegroundColor Green
+            } elseif ($isAdGroupCreated.ToLower() -eq "no") {
+                Write-Host "Would you like to create one now? (yes/no)" -ForegroundColor Yellow
+                $createGroup = Read-Host
+                if ($createGroup.ToLower() -eq "yes") {
+                    $groupName = Read-Host "Enter a name for the new AD group"
+                    New-ADGroup -Name $groupName -GroupScope Global -GroupCategory Security
+                    Write-Log "AD group '$groupName' created successfully." -Level 'INFO'
+                    Write-Host "AD group '$groupName' created. Now you can create the gMSA." -ForegroundColor Green
+                }
+                return
+            } else {
+                Write-Log "Invalid input. Please respond with 'yes' or 'no'." -Level 'ERROR'
+                return
             }
         }
-        catch {
-            Write-Log "Error creating MSA: $_" -Level 'ERROR'
-            $errorMsg = $_.Exception.Message
-            if ($errorMsg -like "*Parameter set cannot be resolved*") {
-                Write-Log "Your Active Directory version might require different parameter combinations." -Level 'WARN'
-                Write-Host "`nYour Active Directory version might require different parameter combinations." -ForegroundColor Yellow
-                Write-Host "Please try one of these commands manually in a PowerShell window:" -ForegroundColor Yellow
-                if ($MSAType -eq '1') {
-                    Write-Host "`nFor standalone MSA (sMSA):" -ForegroundColor Cyan
-                    Write-Host "New-ADServiceAccount -Name $MSAName -RestrictToSingleComputer" -ForegroundColor White
-                    Write-Host "-- OR --" -ForegroundColor Cyan
-                    Write-Host "New-ADServiceAccount -Name $MSAName -SAMAccountName $MSAName`$ -RestrictToSingleComputer" -ForegroundColor White
-                } else {
-                    Write-Host "`nFor group MSA (gMSA):" -ForegroundColor Cyan
-                    Write-Host "New-ADServiceAccount -Name $MSAName" -ForegroundColor White
-                    Write-Host "-- OR --" -ForegroundColor Cyan
-                    Write-Host "New-ADServiceAccount -Name $MSAName -SAMAccountName $MSAName`$" -ForegroundColor White
-                    Write-Host "-- OR --" -ForegroundColor Cyan
-                    Write-Host "New-ADServiceAccount -Name $MSAName -DNSHostName $MSAName.$((Get-ADDomain).DNSRoot)" -ForegroundColor White
-                }
-            }
-        }
-    }
-    catch {
-        Write-Log "Unexpected error in New-ManagedServiceAccount: $_" -Level 'ERROR'
-        Write-Log "Stack Trace: $($_.ScriptStackTrace)" -Level 'ERROR'
-    }
-    finally {
-        if (-not $NonInteractive) {
-            Read-Host "Press Enter to continue"
-        }
+    } catch {
+        Write-Log "Error creating MSA: $_" -Level 'ERROR'
+    } finally {
+        if (-not $NonInteractive) { Read-Host "Press Enter to continue" }
     }
 }
-# Improved List function with sMSA autofix
+
 function List-ManagedServiceAccounts {
     [CmdletBinding()]
     param()
-
     try {
-        Clear-Host
+        MaybeClearHost
         Write-Host "=== List of Managed Service Accounts (MSAs and gMSAs) ===" -ForegroundColor Cyan
-
         $msaList = Get-ADServiceAccount -Filter * -Properties *
         if (-not $msaList -or $msaList.Count -eq 0) {
             Write-Host "No Managed Service Accounts found." -ForegroundColor Yellow
             return
         }
-
         foreach ($item in $msaList) {
             $msaObject = Get-ADServiceAccount -Identity $item.Name -Properties *
             Write-Host ""
             Write-Host "Name: $($msaObject.Name)" -ForegroundColor White
-
-            if ($msaObject.objectClass -eq "msDS-ManagedServiceAccount") {
-                Write-Host "  Type: sMSA (Standalone Managed Service Account)"
-            } elseif ($msaObject.objectClass -eq "msDS-GroupManagedServiceAccount") {
-                Write-Host "  Type: gMSA (Group Managed Service Account)"
-            } else {
-                Write-Host "  Type: Unknown"
+            switch ($msaObject.objectClass) {
+                "msDS-ManagedServiceAccount"         { Write-Host "  Type: sMSA (Standalone Managed Service Account)" }
+                "msDS-GroupManagedServiceAccount"    { Write-Host "  Type: gMSA (Group Managed Service Account)" }
+                default                             { Write-Host "  Type: Unknown" }
             }
             Write-Host "  Enabled: $($msaObject.Enabled)"
             Write-Host "  Description: $($msaObject.Description)"
@@ -321,12 +258,10 @@ function List-ManagedServiceAccounts {
                 $_."msDS-HostServiceAccount" -contains $msaObject.DistinguishedName
             }
             $assignedComputersList = $assignedComputers | Select-Object -ExpandProperty Name
-
             if ($msaObject.objectClass -eq "msDS-ManagedServiceAccount") {
                 if ($assignedComputersList.Count -gt 1) {
                     Write-Host "  WARNING: sMSA assigned to multiple computers! Only one assignment is allowed." -ForegroundColor Red
                     Write-Host "  Assigned Computers: $($assignedComputersList -join ', ')" -ForegroundColor Red
-
                     $autofix = Read-Host "  Do you want to automatically remove all but one assignment for this sMSA? (yes/no)"
                     if ($autofix.ToLower() -eq "yes") {
                         $toRemove = $assignedComputers | Select-Object -Skip 1
@@ -345,7 +280,6 @@ function List-ManagedServiceAccounts {
             } else {
                 Write-Host "  Assigned Computers: $($assignedComputersList -join ', ')"
             }
-
             if ($msaObject.objectClass -eq "msDS-GroupManagedServiceAccount" -and $msaObject.PrincipalsAllowedToRetrieveManagedPassword) {
                 Write-Host "  Principals Allowed (Groups):"
                 foreach ($dn in $msaObject.PrincipalsAllowedToRetrieveManagedPassword) {
@@ -358,54 +292,12 @@ function List-ManagedServiceAccounts {
                 }
             }
         }
-    }
-    catch {
+    } catch {
         Write-Host "Error listing MSAs: $_" -ForegroundColor Red
-    }
-    finally {
-        if (-not $NonInteractive) {
-            Write-Host ""
-            Read-Host "Press Enter to continue"
-        }
+    } finally {
+        if (-not $NonInteractive) { Read-Host "Press Enter to continue" }
     }
 }
-
-
-
-# Example menu:
-if (-not $NonInteractive -and -not $Action) {
-    while ($true) {
-        Clear-Host
-        Write-Host "=== Managed Service Account Manager ===" -ForegroundColor Cyan
-        Write-Host "1. Create Managed Service Account"
-        Write-Host "2. Modify Managed Service Account"
-        Write-Host "3. Delete Managed Service Account"
-        Write-Host "4. Install Managed Service Account"
-        Write-Host "5. List Managed Service Accounts"
-        Write-Host "6. Exit"
-        $choice = Read-Host "Select an option [1-6]"
-        switch ($choice) {
-            "1" { New-ManagedServiceAccount }
-            "2" { Set-MSAProperties }
-            "3" { Remove-ManagedServiceAccount }
-            "4" { Install-ManagedServiceAccount }
-            "5" { List-ManagedServiceAccounts }
-            "6" { break }
-            default { Write-Host "Invalid selection." -ForegroundColor Red; Start-Sleep 1 }
-        }
-    }
-} elseif ($Action) {
-    switch ($Action) {
-        "Create" { New-ManagedServiceAccount -MSAName $MSAName -MSAType $MSAType }
-        "Modify" { Set-MSAProperties -MSAName $MSAName }
-        "Delete" { Remove-ManagedServiceAccount -MSAName $MSAName }
-        "Install" { Install-ManagedServiceAccount -MSAName $MSAName -ComputerName $ComputerName }
-        "List" { List-ManagedServiceAccounts }
-        # Add others as needed...
-        default { Write-Host "Unknown action: $Action" -ForegroundColor Red }
-    }
-}
-
 
 
 # Better function to find computers that have permission to use an MSA
@@ -1498,251 +1390,6 @@ function Get-ManagedServiceAccounts {
     }
 }
 
-# Function to export MSA configuration
-function Export-MSAConfiguration {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory=$false)]
-        [string]$FilePath
-    )
-    
-    try {
-        Clear-Host
-        Write-Host "=== Export MSA Configuration ===" -ForegroundColor Cyan
-        Write-Log "Starting MSA configuration export process" -Level 'INFO'
-        
-        if ([string]::IsNullOrWhiteSpace($FilePath)) {
-            $defaultPath = "$env:USERPROFILE\Documents\MSAConfig_$(Get-Date -Format 'yyyyMMdd_HHmmss').json"
-            $FilePath = Read-Host "Enter export file path (default: $defaultPath)"
-            
-            if ([string]::IsNullOrWhiteSpace($FilePath)) {
-                $FilePath = $defaultPath
-            }
-        }
-        
-        # Initialize progress bar
-        $progressParams = @{
-            Activity = "Exporting MSA Configuration"
-            Status = "Getting MSA accounts"
-            PercentComplete = 10
-        }
-        Write-Progress @progressParams
-        
-               $msaList = Get-ADServiceAccount -Filter * -Properties Name, DNSHostName, Enabled, Description, 
-                  Created, Modified, PrincipalsAllowedToRetrieveManagedPassword, objectClass
-        
-        # Update progress
-        $progressParams.PercentComplete = 30
-        $progressParams.Status = "Processing MSA details"
-        Write-Progress @progressParams
-        
-        if ($msaList -eq $null -or ($msaList -is [array] -and $msaList.Count -eq 0)) {
-            Write-Host "No Managed Service Accounts found to export." -ForegroundColor Yellow
-            Write-Log "No MSA accounts found to export." -Level 'WARN'
-            return
-        }
-        
-        # Force into array if single item
-        if (-not ($msaList -is [array])) {
-            $msaList = @($msaList)
-        }
-        
-        $exportData = @()
-        $counter = 0
-        $total = $msaList.Count
-        
-        foreach ($msa in $msaList) {
-            # Update progress for each MSA
-            $counter++
-            $progressParams.PercentComplete = 30 + (60 * $counter / $total)
-            $progressParams.Status = "Processing MSA $counter of ($total): $($msa.Name)"
-            Write-Progress @progressParams
-            
-            $principals = Get-MSAPrincipals -MSAName $msa.Name
-            
-            # Determine MSA type
-            $msaType = "gMSA"
-            if ($msa.objectClass -contains "msDS-ManagedServiceAccount") {
-                $msaType = "sMSA"
-            }
-            
-            $exportData += [PSCustomObject]@{
-                Name = $msa.Name
-                Type = $msaType
-                Description = $msa.Description
-                Enabled = $msa.Enabled
-                DNSHostName = $msa.DNSHostName
-                Created = $msa.Created.ToString('yyyy-MM-dd HH:mm:ss')
-                Modified = $msa.Modified.ToString('yyyy-MM-dd HH:mm:ss')
-                Principals = $principals | Select-Object Name, Type, SAMAccountName, DistinguishedName
-            }
-        }
-        
-        # Update progress
-        $progressParams.PercentComplete = 90
-        $progressParams.Status = "Saving configuration to file"
-        Write-Progress @progressParams
-        
-        # Create directory if it doesn't exist
-        $directory = Split-Path -Path $FilePath -Parent
-        if (-not [string]::IsNullOrWhiteSpace($directory) -and -not (Test-Path $directory)) {
-            New-Item -Path $directory -ItemType Directory -Force | Out-Null
-        }
-        
-        $exportData | ConvertTo-Json -Depth 5 | Out-File -FilePath $FilePath -Force
-        
-        # Complete progress
-        $progressParams.PercentComplete = 100
-        $progressParams.Completed = $true
-        Write-Progress @progressParams
-        
-        Write-Host "MSA configuration exported to $FilePath" -ForegroundColor Green
-        Write-Log "MSA configuration exported to $FilePath" -Level 'INFO'
-    }
-    catch {
-        Write-Host "Error exporting MSA configuration: $_" -ForegroundColor Red
-        Write-Log "Error exporting MSA configuration: $_" -Level 'ERROR'
-        Write-Log "Stack Trace: $($_.ScriptStackTrace)" -Level 'ERROR'
-    }
-    finally {
-        if (-not $NonInteractive) {
-            Read-Host "Press Enter to continue"
-        }
-    }
-}
-
-# Function to import MSA configuration
-function Import-MSAConfiguration {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory=$false)]
-        [string]$FilePath
-    )
-    
-    try {
-        Clear-Host
-        Write-Host "=== Import MSA Configuration ===" -ForegroundColor Cyan
-        Write-Log "Starting MSA configuration import process" -Level 'INFO'
-        
-        if ([string]::IsNullOrWhiteSpace($FilePath)) {
-            $FilePath = Read-Host "Enter the path to the MSA configuration JSON file"
-            
-            if ([string]::IsNullOrWhiteSpace($FilePath) -or -not (Test-Path $FilePath)) {
-                Write-Host "File not found or invalid path specified." -ForegroundColor Red
-                Write-Log "Invalid file path specified for import: $FilePath" -Level 'ERROR'
-                return
-            }
-        }
-        
-        # Initialize progress bar
-        $progressParams = @{
-            Activity = "Importing MSA Configuration"
-            Status = "Reading configuration file"
-            PercentComplete = 10
-        }
-        Write-Progress @progressParams
-        
-        # Read and parse configuration file
-        $importData = Get-Content -Path $FilePath -Raw | ConvertFrom-Json
-        
-        # Update progress
-        $progressParams.PercentComplete = 30
-        $progressParams.Status = "Analyzing configuration"
-        Write-Progress @progressParams
-        
-        if ($importData -eq $null) {
-            Write-Host "No valid configuration data found in file." -ForegroundColor Red
-            Write-Log "No valid MSA configuration data found in import file." -Level 'ERROR'
-            return
-        }
-        
-        # Display import summary
-        Write-Host "`nFound $($importData.Count) MSA configurations to import:" -ForegroundColor Yellow
-        foreach ($msa in $importData) {
-            Write-Host "- $($msa.Name) (Type: $($msa.Type))" -ForegroundColor White
-        }
-        
-        # Confirm import
-        $confirm = Read-Host "`nDo you want to import these configurations? This is a READ-ONLY VIEW and will not create MSAs. (yes/no)"
-        if ($confirm.ToLower() -ne "yes") {
-            Write-Host "Import operation canceled." -ForegroundColor Yellow
-            Write-Log "MSA configuration import canceled by user." -Level 'INFO'
-            return
-        }
-        
-        # Process configurations
-        Write-Host "`nProcessing MSA configurations (READ-ONLY MODE):" -ForegroundColor Cyan
-        $counter = 0
-        $total = $importData.Count
-        
-        foreach ($msa in $importData) {
-            $counter++
-            $progressParams.PercentComplete = 30 + (60 * $counter / $total)
-            $progressParams.Status = "Processing MSA $counter of ($total): $($msa.Name)"
-            Write-Progress @progressParams
-            
-            Write-Host "`n[$counter/$total] Processing $($msa.Name):" -ForegroundColor Cyan
-            
-            # Check if MSA exists
-            $existingMSA = Get-ADServiceAccount -Filter "Name -eq '$($msa.Name)'" -ErrorAction SilentlyContinue
-            if ($existingMSA) {
-                Write-Host "  MSA $($msa.Name) already exists in Active Directory." -ForegroundColor Yellow
-                Write-Host "  Created: $($msa.Created)"
-                Write-Host "  Description: $($msa.Description)"
-                
-                # Show principals
-                if ($msa.Principals -and $msa.Principals.Count -gt 0) {
-                    Write-Host "  Principals:" -ForegroundColor White
-                    foreach ($principal in $msa.Principals) {
-                        Write-Host "    - $($principal.Name) (Type: $($principal.Type))" -ForegroundColor Gray
-                    }
-                }
-            }
-            else {
-                Write-Host "  MSA $($msa.Name) does not exist in Active Directory." -ForegroundColor White
-                Write-Host "  Type: $($msa.Type)"
-                Write-Host "  Description: $($msa.Description)"
-                Write-Host "  Created: $($msa.Created)"
-                
-                # Show creation command
-                Write-Host "  To create this MSA, you would use:" -ForegroundColor White
-                if ($msa.Type -eq "sMSA") {
-                    Write-Host "  New-ADServiceAccount -Name $($msa.Name) -RestrictToSingleComputer" -ForegroundColor Gray
-                } 
-                else {
-                    $groupPrincipals = $msa.Principals | Where-Object { $_.Type -eq "group" }
-                    if ($groupPrincipals -and $groupPrincipals.Count -gt 0) {
-                        $groupName = $groupPrincipals[0].Name
-                        Write-Host "  New-ADServiceAccount -Name $($msa.Name) -PrincipalsAllowedToRetrieveManagedPassword $groupName" -ForegroundColor Gray
-                    }
-                    else {
-                        Write-Host "  New-ADServiceAccount -Name $($msa.Name)" -ForegroundColor Gray
-                    }
-                }
-            }
-        }
-        
-        # Complete progress
-        $progressParams.PercentComplete = 100
-        $progressParams.Completed = $true
-        Write-Progress @progressParams
-        
-        Write-Host "`nMSA configuration import preview completed successfully." -ForegroundColor Green
-        Write-Host "This was a READ-ONLY operation. No MSAs were created or modified." -ForegroundColor Yellow
-        Write-Log "MSA configuration import preview completed." -Level 'INFO'
-    }
-    catch {
-        Write-Host "Error importing MSA configuration: $_" -ForegroundColor Red
-        Write-Log "Error importing MSA configuration: $_" -Level 'ERROR'
-        Write-Log "Stack Trace: $($_.ScriptStackTrace)" -Level 'ERROR'
-    }
-    finally {
-        if (-not $NonInteractive) {
-            Read-Host "Press Enter to continue"
-        }
-    }
-}
-
 # Function to get current username from whoami
 function Get-CurrentUsername {
     try {
@@ -1757,87 +1404,41 @@ function Get-CurrentUsername {
     }
 }
 
-# Main menu function
-function Show-MainMenu {
-    $continue = $true
-    
-    while ($continue) {
-        # Get actual current date/time in the required format
-        $currentDateTime = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-        
-        # Get current username from whoami
-        $currentUsername = Get-CurrentUsername
-        
-        Clear-Host
-        Write-Host "===================================" -ForegroundColor Blue
-        Write-Host "       MSA MANAGEMENT SYSTEM       " -ForegroundColor Cyan
-        Write-Host "===================================" -ForegroundColor Blue
-        Write-Host
-        Write-Host "Current Date and Time (UTC - YYYY-MM-DD HH:MM:SS formatted): $currentDateTime" -ForegroundColor Gray
-        Write-Host "Current User's Login: $currentUsername" -ForegroundColor Gray
-        Write-Host
-        Write-Host "1. Create new MSA" -ForegroundColor Yellow
-        Write-Host "2. Modify existing MSA" -ForegroundColor Yellow
-        Write-Host "3. Delete MSA" -ForegroundColor Yellow
-        Write-Host "4. Install MSA on a computer" -ForegroundColor Yellow
-        Write-Host "5. List all MSAs" -ForegroundColor Yellow
-        Write-Host "6. Test MSA installation" -ForegroundColor Yellow
-        Write-Host "7. Export MSA configuration" -ForegroundColor Yellow
-        Write-Host "8. Import MSA configuration" -ForegroundColor Yellow
-        Write-Host "0. Exit" -ForegroundColor Yellow
-        Write-Host
-        
-        $choice = Read-Host "Enter your choice"
-        
+# =================== Main Logic ===================
+
+if (-not (Test-ADModule)) {
+    Write-Host "Active Directory module could not be loaded. Exiting." -ForegroundColor Red
+    exit 1
+}
+
+if (-not $NonInteractive -and -not $Action) {
+    while ($true) {
+        MaybeClearHost
+        Write-Host "=== Managed Service Account Manager ===" -ForegroundColor Cyan
+        Write-Host "1. Create Managed Service Account"
+        Write-Host "2. Modify Managed Service Account"
+        Write-Host "3. Delete Managed Service Account"
+        Write-Host "4. Install Managed Service Account"
+        Write-Host "5. List Managed Service Accounts"
+        Write-Host "6. Exit"
+        $choice = Read-Host "Select an option [1-6]"
         switch ($choice) {
             "1" { New-ManagedServiceAccount }
             "2" { Set-MSAProperties }
             "3" { Remove-ManagedServiceAccount }
             "4" { Install-ManagedServiceAccount }
-            "5" { Get-ManagedServiceAccounts }
-            "6" { Test-MSAInstallation }
-            "7" { Export-MSAConfiguration }
-            "8" { Import-MSAConfiguration }
-            "0" { $continue = $false }
-            default { 
-                Write-Host "Invalid selection. Press Enter to continue..." -ForegroundColor Red
-                Read-Host
-            }
+            "5" { List-ManagedServiceAccounts }
+            "6" { break }
+            default { Write-Host "Invalid selection." -ForegroundColor Red; Start-Sleep 1 }
         }
     }
-}
-
-# Handle non-interactive mode
-if ($NonInteractive) {
-    Write-Log "Starting script in non-interactive mode" -Level 'INFO'
-    
+} elseif ($Action) {
     switch ($Action) {
         "Create" { New-ManagedServiceAccount -MSAName $MSAName -MSAType $MSAType }
-        "Modify" { Set-MSAProperties -MSAName $MSAName -ComputerName $ComputerName }
+        "Modify" { Set-MSAProperties -MSAName $MSAName }
         "Delete" { Remove-ManagedServiceAccount -MSAName $MSAName }
         "Install" { Install-ManagedServiceAccount -MSAName $MSAName -ComputerName $ComputerName }
-        "List" { Get-ManagedServiceAccounts }
-        "Test" { Test-MSAInstallation -MSAName $MSAName -ComputerName $ComputerName }
-        "Export" { Export-MSAConfiguration -FilePath $ExportPath }
-        "Import" { Import-MSAConfiguration -FilePath $ImportPath }
-        default { 
-            Write-Log "No valid action specified for non-interactive mode." -Level 'ERROR'
-            Write-Host "Error: No valid action specified for non-interactive mode." -ForegroundColor Red
-            Write-Host "Valid actions: Create, Modify, Delete, Install, List, Test, Export, Import" -ForegroundColor Yellow
-        }
+        "List" { List-ManagedServiceAccounts }
+        default { Write-Host "Unknown action: $Action" -ForegroundColor Red }
     }
-    
-    exit
-}
-
-# Main script execution
-Clear-Host
-Write-Host "Welcome to the MSA Management System" -ForegroundColor Green
-Write-Host "Checking prerequisites..." -ForegroundColor Yellow
-
-if (Test-ADModule) {
-    Show-MainMenu
-} else {
-    Write-Host "Unable to proceed without the Active Directory module." -ForegroundColor Red
-    Read-Host "Press Enter to exit"
 }
