@@ -523,18 +523,33 @@ function Set-MSAProperties {
                     Write-Log "Computer '$ComputerName' not found in Active Directory." -Level 'ERROR'
                     return
                 }
-                # --- ENFORCE SINGLE ASSIGNMENT ---
+
+                # Find all currently assigned computers
                 $msaDN = $selectedMSA.DistinguishedName
                 $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
                     $_."msDS-HostServiceAccount" -contains $msaDN
                 }
+
+                if ($assignedComputers.Count -gt 0) {
+                    Write-Host "WARNING: This sMSA is already assigned to the following computer(s):" -ForegroundColor Yellow
+                    foreach ($comp in $assignedComputers) {
+                        Write-Host "  - $($comp.Name)" -ForegroundColor Yellow
+                    }
+                    Write-Host "The assignment will now be changed to '$ComputerName'." -ForegroundColor Yellow
+                }
+
+                # Remove the sMSA from all previously assigned computers
                 foreach ($comp in $assignedComputers) {
-                    if ($comp.Name -ne $ComputerName) {
+                    try {
                         Remove-ADComputerServiceAccount -Identity $comp.Name -ServiceAccount $MSAName
                         Write-Log "Removed sMSA '$MSAName' from computer '$($comp.Name)'" -Level 'INFO'
                         Write-Host "Removed sMSA from $($comp.Name)." -ForegroundColor Yellow
+                    } catch {
+                        Write-Host "Failed to remove sMSA from $($comp.Name): $_" -ForegroundColor Red
+                        Write-Log "Failed to remove sMSA '$MSAName' from computer '$($comp.Name)': $_" -Level 'ERROR'
                     }
                 }
+
                 # Add the new computer to the MSA
                 try {
                     Add-ADComputerServiceAccount -Identity $ComputerName -ServiceAccount $MSAName
