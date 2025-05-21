@@ -617,70 +617,152 @@ function Set-MSAProperties {
         }
 
         switch ($Operation) {
-            "1" {
-                # Change assigned computer (sMSA only)
-                if ($selectedMSA.objectClass -contains "msDS-GroupManagedServiceAccount") {
-                    Write-Host "You cannot assign computers to a gMSA. Please assign an AD group instead." -ForegroundColor Red
-                    Write-Log "Attempted to assign a computer directly to a gMSA '$MSAName', which is not supported." -Level 'ERROR'
-                    return
-                }
-                if ([string]::IsNullOrWhiteSpace($ComputerName)) {
-                    $ComputerName = Read-Host "Enter the new computer name to assign to this MSA"
-                }
-                if (-not (Get-ADComputer -Filter "Name -eq '$ComputerName'" -ErrorAction SilentlyContinue)) {
-                    Write-Host "Computer '$ComputerName' not found in Active Directory." -ForegroundColor Red
-                    Write-Log "Computer '$ComputerName' not found in Active Directory." -Level 'ERROR'
-                    return
-                }
-                # Remove all existing assignments
-                $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
-                    $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName
-                }
-                if ($assignedComputers.Count -gt 0) {
-                    Write-Host "Warning: This sMSA is already assigned to: $($assignedComputers.Name -join ', ')" -ForegroundColor Yellow
-                    $choice = Read-Host "Remove the sMSA from those computers and assign to $ComputerName? (yes/no)"
-                    if ($choice.ToLower() -eq "yes") {
-                        foreach ($c in $assignedComputers) {
-                            Remove-ADComputerServiceAccount -Identity $c.Name -ServiceAccount $MSAName
-                            Write-Log "Removed sMSA '$MSAName' from computer '$($c.Name)'" -Level 'INFO'
-                        }
-                        Add-ADComputerServiceAccount -Identity $ComputerName -ServiceAccount $MSAName -ErrorAction Stop
-                        Write-Log "Computer '$ComputerName' allowed to use MSA '$MSAName'." -Level 'INFO'
-                        Write-Host "Computer '$ComputerName' allowed to use MSA '$MSAName'." -ForegroundColor Green
+           "1" {
+    # Change assigned computer (sMSA only)
+    if ($selectedMSA.objectClass -contains "msDS-GroupManagedServiceAccount") {
+        Write-Host "You cannot assign computers to a gMSA. Please assign an AD group instead." -ForegroundColor Red
+        Write-Log "Attempted to assign a computer directly to a gMSA '$MSAName', which is not supported." -Level 'ERROR'
+        return
+    }
+    if ([string]::IsNullOrWhiteSpace($ComputerName)) {
+        $ComputerName = Read-Host "Enter the new computer name to assign to this MSA"
+    }
+    if (-not (Get-ADComputer -Filter "Name -eq '$ComputerName'" -ErrorAction SilentlyContinue)) {
+        Write-Host "Computer '$ComputerName' not found in Active Directory." -ForegroundColor Red
+        Write-Log "Computer '$ComputerName' not found in Active Directory." -Level 'ERROR'
+        return
+    }
 
-                        # Verify only one assignment exists
-                        $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
-                            $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName
-                        }
-                        if ($assignedComputers.Count -ne 1) {
-                            Write-Host "WARNING: There are $($assignedComputers.Count) computers assigned to this sMSA! Only one is allowed." -ForegroundColor Red
-                            $toRemove = $assignedComputers | Where-Object { $_.Name -ne $ComputerName }
-                            foreach ($comp in $toRemove) {
-                                Remove-ADComputerServiceAccount -Identity $comp.Name -ServiceAccount $MSAName
-                                Write-Host "Removed $($comp.Name) from the sMSA." -ForegroundColor Yellow
-                                Write-Log "Removed computer '$($comp.Name)' from sMSA '$MSAName'." -Level 'INFO'
-                            }
-                        }
-                        # Ensure no group principals
-                        $msaObject = Get-ADServiceAccount -Identity $MSAName -Properties objectClass, PrincipalsAllowedToRetrieveManagedPassword
-                        if ($msaObject.objectClass -eq "msDS-ManagedServiceAccount" -and $msaObject.PrincipalsAllowedToRetrieveManagedPassword) {
-                            Set-ADServiceAccount -Identity $MSAName -PrincipalsAllowedToRetrieveManagedPassword $null
-                            Write-Host "Cleared group principals for sMSA $MSAName." -ForegroundColor Yellow
-                            Write-Log "Cleared group principals for sMSA $MSAName." -Level 'INFO'
-                        }
-                    } else {
-                        Write-Host "Operation canceled. sMSA not reassigned." -ForegroundColor Red
-                        Write-Log "User canceled sMSA reassignment." -Level 'WARN'
-                        return
-                    }
-                } else {
-                    # No previous assignments, just add
-                    Add-ADComputerServiceAccount -Identity $ComputerName -ServiceAccount $MSAName -ErrorAction Stop
-                    Write-Log "Computer '$ComputerName' allowed to use MSA '$MSAName'." -Level 'INFO'
-                    Write-Host "Computer '$ComputerName' allowed to use MSA '$MSAName'." -ForegroundColor Green
-                }
+    # Find all computers currently assigned to this sMSA
+    $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
+        $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName
+    }
+
+    # Remove sMSA from all old computers (except the new one, if somehow it was already there)
+    foreach ($c in $assignedComputers) {
+        if ($c.Name -ne $ComputerName) {
+            Remove-ADComputerServiceAccount -Identity $c.Name -ServiceAccount $MSAName
+            Write-Log "Removed sMSA '$MSAName' from computer '$($c.Name)'" -Level 'INFO'
+            Write-Host "Removed sMSA '$MSAName' from computer '$($c.Name)'" -ForegroundColor Yellow
+        }
+    }
+
+    # (Re)assign the sMSA to the new computer
+    Add-ADComputerServiceAccount -Identity $ComputerName -ServiceAccount $MSAName -ErrorAction Stop
+    Write-Log "Computer '$ComputerName' allowed to use MSA '$MSAName'." -Level 'INFO'
+    Write-Host "Computer '$ComputerName' allowed to use MSA '$MSAName'." -ForegroundColor Green
+
+    # Ensure only one assignment exists (for safety, repeat check)
+    $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
+        $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName
+    }
+    if ($assignedComputers.Count -ne 1) {
+        Write-Host "WARNING: There are $($assignedComputers.Count) computers assigned to this sMSA! Only one is allowed." -ForegroundColor Red
+        $toRemove = $assignedComputers | Where-Object { $_.Name -ne $ComputerName }
+        foreach ($comp in $toRemove) {
+            Remove-ADComputerServiceAccount -Identity $comp.Name -ServiceAccount $MSAName
+            Write-Host "Removed $($comp.Name) from the sMSA." -ForegroundColor Yellow
+            Write-Log "Removed computer '$($comp.Name)' from sMSA '$MSAName'." -Level 'INFO'
+        }
+    }
+
+    # Ensure no group principals
+    $msaObject = Get-ADServiceAccount -Identity $MSAName -Properties objectClass, PrincipalsAllowedToRetrieveManagedPassword
+    if ($msaObject.objectClass -eq "msDS-ManagedServiceAccount" -and $msaObject.PrincipalsAllowedToRetrieveManagedPassword) {
+        Set-ADServiceAccount -Identity $MSAName -PrincipalsAllowedToRetrieveManagedPassword $null
+        Write-Host "Cleared group principals for sMSA $MSAName." -ForegroundColor Yellow
+        Write-Log "Cleared group principals for sMSA $MSAName." -Level 'INFO'
+    }
+}
+
+"2" {
+    # Assign AD group (gMSA only)
+    if ($selectedMSA.objectClass -notcontains "msDS-GroupManagedServiceAccount") {
+        Write-Host "You can only assign groups to a gMSA." -ForegroundColor Red
+        Write-Log "Attempted to assign a group to a non-gMSA '$MSAName'." -Level 'ERROR'
+        return
+    }
+    if ([string]::IsNullOrWhiteSpace($GroupName)) {
+        $GroupName = Read-Host "Enter the AD group name to assign to this gMSA"
+    }
+    $group = Get-ADGroup -Identity $GroupName -ErrorAction SilentlyContinue
+    if (-not $group) {
+        Write-Host "Group '$GroupName' not found in Active Directory." -ForegroundColor Red
+        Write-Log "Group '$GroupName' not found in Active Directory." -Level 'ERROR'
+        return
+    }
+    Set-ADServiceAccount -Identity $MSAName -PrincipalsAllowedToRetrieveManagedPassword $GroupName
+    Write-Log "Set gMSA '$MSAName' principals to group '$GroupName'." -Level 'INFO'
+    Write-Host "gMSA '$MSAName' now assigned to group '$GroupName'." -ForegroundColor Green
+}
+
+
+"3" {
+    if ([string]::IsNullOrWhiteSpace($Description)) {
+        $Description = Read-Host "Enter the new description for $MSAName"
+    }
+    Set-ADServiceAccount -Identity $MSAName -Description $Description
+    Write-Log "Updated description for '$MSAName' to '$Description'." -Level 'INFO'
+    Write-Host "Description updated for '$MSAName'." -ForegroundColor Green
+}
+
+
+"4" {
+    Write-Host "Assigned principals/computers for $MSAName:" -ForegroundColor Yellow
+    if ($selectedMSA.objectClass -contains "msDS-GroupManagedServiceAccount") {
+        # gMSA: show groups allowed to retrieve password
+        $principals = $selectedMSA.PrincipalsAllowedToRetrieveManagedPassword
+        if ($principals) {
+            foreach ($p in $principals) {
+                Write-Host "- $p"
             }
-            # Other cases remain as in your current script...
+        } else {
+            Write-Host "No groups assigned." -ForegroundColor Yellow
+        }
+    } else {
+        # sMSA: show assigned computer(s)
+        $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
+            $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName
+        }
+        if ($assignedComputers.Count -gt 0) {
+            foreach ($c in $assignedComputers) {
+                Write-Host "- $($c.Name)"
+            }
+        } else {
+            Write-Host "No computers assigned." -ForegroundColor Yellow
+        }
+    }
+    Write-Log "Listed assigned principals/computers for '$MSAName'." -Level 'INFO'
+}
+
+"5" {
+    # Remove all computers from sMSA
+    if ($selectedMSA.objectClass -contains "msDS-GroupManagedServiceAccount") {
+        Write-Host "gMSA does not have direct computer assignments." -ForegroundColor Red
+        Write-Log "Attempted to remove computers from gMSA '$MSAName'." -Level 'ERROR'
+        return
+    }
+    $assignedComputers = Get-ADComputer -Filter * -Properties msDS-HostServiceAccount | Where-Object {
+        $_."msDS-HostServiceAccount" -contains $selectedMSA.DistinguishedName
+    }
+    if ($assignedComputers.Count -eq 0) {
+        Write-Host "No computers assigned to this sMSA." -ForegroundColor Yellow
+        Write-Log "No computers to remove from sMSA '$MSAName'." -Level 'WARN'
+        return
+    }
+    foreach ($c in $assignedComputers) {
+        Remove-ADComputerServiceAccount -Identity $c.Name -ServiceAccount $MSAName
+        Write-Host "Removed sMSA '$MSAName' from computer '$($c.Name)'." -ForegroundColor Yellow
+        Write-Log "Removed sMSA '$MSAName' from computer '$($c.Name)'." -Level 'INFO'
+    }
+    Write-Host "All computers removed from sMSA '$MSAName'." -ForegroundColor Green
+    Write-Log "All computers removed from sMSA '$MSAName'." -Level 'INFO'
+}
+
+
+
+
+
             "6" {
                 Write-Host "Exiting modification menu." -ForegroundColor Cyan
                 return
