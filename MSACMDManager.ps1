@@ -708,7 +708,7 @@ function Set-MSAProperties {
 
 
 "4" {
-    Write-Host "Assigned principals/computers for $MSAName:" -ForegroundColor Yellow
+    Write-Host "Assigned principals/computers for ($MSAName):" -ForegroundColor Yellow
     if ($selectedMSA.objectClass -contains "msDS-GroupManagedServiceAccount") {
         # gMSA: show groups allowed to retrieve password
         $principals = $selectedMSA.PrincipalsAllowedToRetrieveManagedPassword
